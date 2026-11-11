@@ -19,7 +19,7 @@ pub struct Candidate {
 /// Sessions due for a summary, most recently ended first. Without `backfill`
 /// (the daemon), only sessions that started after the daemon first ran are
 /// picked; older ones wait for an explicit `recherche summarize`. `force`
-/// bypasses only the growth check.
+/// bypasses the inactivity and growth checks.
 pub fn candidates(
     c: &Connection,
     cfg: &Config,
@@ -36,11 +36,11 @@ pub fn candidates(
     let idle_before = chrono::Utc::now().timestamp() - cfg.llm.idle_minutes * 60;
     let mut st = c.prepare(
         "SELECT id, source, COALESCE(cwd, ''), turn_count, summary_turns FROM sessions
-         WHERE skip = 0 AND turn_count > 0 AND parent_id IS NULL AND ended < ? AND started >= ?
+         WHERE skip = 0 AND turn_count > 0 AND parent_id IS NULL AND (? OR ended < ?) AND started >= ?
          ORDER BY ended DESC",
     )?;
     let rows: Vec<(String, String, String, i64, Option<i64>)> = st
-        .query_map(params![idle_before, cutoff], |r| {
+        .query_map(params![force, idle_before, cutoff], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?
         .collect::<Result<_, _>>()?;
@@ -203,7 +203,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn force_includes_unchanged_sessions_but_preserves_eligibility_rules() -> Result<()> {
+    fn force_bypasses_inactivity_and_growth_but_preserves_exclusions() -> Result<()> {
         let c = store::open(std::path::Path::new(":memory:"))?;
         let now = chrono::Utc::now().timestamp();
         store::set_meta(&c, "auto_summary_since", &(now - 10_800).to_string())?;
@@ -215,6 +215,7 @@ mod tests {
             "grown",
             "new",
             "active",
+            "active_new",
             "excluded",
             "source",
             "child",
@@ -230,14 +231,17 @@ mod tests {
         }
         c.execute_batch(
             "UPDATE sessions SET turn_count = 17 WHERE id = 'grown';
-             UPDATE sessions SET summary_turns = NULL, summary = NULL WHERE id = 'new';
+             UPDATE sessions SET summary_turns = NULL, summary = NULL WHERE id IN ('new', 'active_new');
              UPDATE sessions SET cwd = '/excluded/project' WHERE id = 'excluded';
              UPDATE sessions SET source = 'codex' WHERE id = 'source';
              UPDATE sessions SET parent_id = 'unchanged' WHERE id = 'child';
              UPDATE sessions SET skip = 1 WHERE id = 'skipped';
              UPDATE sessions SET turn_count = 0 WHERE id = 'empty';",
         )?;
-        c.execute("UPDATE sessions SET ended = ? WHERE id = 'active'", [now])?;
+        c.execute(
+            "UPDATE sessions SET ended = ? WHERE id IN ('active', 'active_new')",
+            [now],
+        )?;
         c.execute(
             "UPDATE sessions SET started = ? WHERE id = 'older'",
             [now - 14_400],
@@ -252,8 +256,21 @@ mod tests {
         };
         assert_eq!(ids(false, false)?, ["grown", "new"]);
         assert_eq!(ids(true, false)?, ["grown", "new"]);
-        assert_eq!(ids(false, true)?, ["grown", "new", "unchanged"]);
-        assert_eq!(ids(true, true)?, ["grown", "new", "older", "unchanged"]);
+        assert_eq!(
+            ids(false, true)?,
+            ["active", "active_new", "grown", "new", "unchanged"]
+        );
+        assert_eq!(
+            ids(true, true)?,
+            ["active", "active_new", "grown", "new", "older", "unchanged"]
+        );
+        let newest: Vec<_> = candidates(&c, &cfg, true, true)?
+            .into_iter()
+            .take(2)
+            .map(|s| s.id)
+            .collect();
+        assert!(newest.contains(&"active".to_string()));
+        assert!(newest.contains(&"active_new".to_string()));
         let stored: (String, i64) = c.query_row(
             "SELECT summary, summary_turns FROM sessions WHERE id = 'unchanged'",
             [],

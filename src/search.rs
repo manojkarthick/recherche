@@ -19,7 +19,7 @@ use crate::store::{self, Catalog, SessionMeta};
 use anyhow::Result;
 use regex::Regex;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -76,7 +76,10 @@ struct Agg {
 
 impl Engine {
     pub fn open(cfg: Config) -> Result<Self> {
-        let data = crate::config::data_dir();
+        Self::open_in(cfg, &crate::config::data_dir())
+    }
+
+    fn open_in(cfg: Config, data: &Path) -> Result<Self> {
         let db = data.join("recherche.db");
         let conn = store::open(&db)?;
         let lex = Lexical::open(&data.join("tantivy"))?;
@@ -115,20 +118,17 @@ impl Engine {
         let _g = self.refresh_lock.lock().unwrap();
         let mut c = self.conn()?;
         let stats = crate::ingest::Ingester::new(&self.cfg).run(&mut c, rebuild)?;
-        let n = self
-            .lex
+        self.lex
             .update(&mut c, self.cfg.search.boilerplate_min_sessions, rebuild)?;
-        if n > 0 || rebuild {
-            *self.catalog.write().unwrap() = Arc::new(Catalog::load(&c)?);
-        }
-        if self.cfg.search.vectors && embed {
-            match crate::models::embed_missing(&self.models, &c) {
-                Ok(e) if e > 0 || rebuild => {
-                    *self.vecs.write().unwrap() = Arc::new(VecStore::load(&c)?)
-                }
-                Ok(_) => {}
-                Err(e) => tracing::warn!("embedding failed, semantic search is limited: {e:#}"),
+        // Another process can finish indexing and clear dirty flags before this
+        // pass. Reload readers even when we did not index anything ourselves.
+        self.lex.reload()?;
+        *self.catalog.write().unwrap() = Arc::new(Catalog::load(&c)?);
+        if self.cfg.search.vectors {
+            if embed && let Err(e) = crate::models::embed_missing(&self.models, &c) {
+                tracing::warn!("embedding failed, semantic search is limited: {e:#}");
             }
+            *self.vecs.write().unwrap() = Arc::new(VecStore::load(&c)?);
         }
         c.execute("UPDATE sessions SET dirty = 0 WHERE dirty = 1", [])?;
         Ok(stats)
@@ -542,4 +542,63 @@ fn aggregate_vec(
         }
     }
     finish(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_picks_up_summaries_indexed_by_another_process() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let c = store::open(&dir.path().join("recherche.db"))?;
+        c.execute(
+            "INSERT INTO sessions (id, source, host, title, summary, started, ended, turn_count, archive_path)
+             VALUES ('session', 'claude', 'test', 'Original title', 'Original summary', 1, 2, 1, '')",
+            [],
+        )?;
+        let mut cfg = Config::default();
+        cfg.sources.claude_dir = Some(dir.path().join("claude"));
+        cfg.sources.codex_dir = Some(dir.path().join("codex"));
+        cfg.llm.enabled = false;
+        cfg.search.rerank = false;
+        let cli = Engine::open_in(cfg.clone(), dir.path())?;
+        cli.refresh_with(false, false)?;
+        c.execute(
+            "INSERT INTO vecs (hash, v) SELECT card_hash, ? FROM sessions WHERE id = 'session'",
+            [1.0_f32.to_le_bytes().as_slice()],
+        )?;
+        let server = Engine::open_in(cfg, dir.path())?;
+        assert_eq!(server.vecs.read().unwrap().data, [1.0]);
+
+        // The CLI writes a summary and finishes indexing before the server polls.
+        c.execute(
+            "UPDATE sessions SET summary = 'Quasar analysis', llm_title = 'Updated title',
+             summary_turns = 1, dirty = 1 WHERE id = 'session'",
+            [],
+        )?;
+        cli.refresh_with(false, false)?;
+        c.execute(
+            "INSERT INTO vecs (hash, v) SELECT card_hash, ? FROM sessions WHERE id = 'session'",
+            [2.0_f32.to_le_bytes().as_slice()],
+        )?;
+        let dirty: i64 = c.query_row("SELECT SUM(dirty) FROM sessions", [], |r| r.get(0))?;
+        assert_eq!(dirty, 0);
+        assert_eq!(server.catalog().sessions["session"].title, "Original title");
+        assert!(server.quick(&server.parse("quasar"))?.hits.is_empty());
+        assert_eq!(server.vecs.read().unwrap().data, [1.0]);
+
+        server.refresh_with(false, false)?;
+        let cat = server.catalog();
+        assert_eq!(cat.sessions["session"].title, "Updated title");
+        assert_eq!(
+            cat.sessions["session"].summary.as_deref(),
+            Some("Quasar analysis")
+        );
+        let results = server.quick(&server.parse("quasar"))?;
+        assert_eq!(results.hits.len(), 1);
+        assert_eq!(results.hits[0].session, "session");
+        assert_eq!(server.vecs.read().unwrap().data, [2.0]);
+        Ok(())
+    }
 }
