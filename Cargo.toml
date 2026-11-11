@@ -31,6 +31,10 @@ toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[lints.clippy]
+# SQL rows are read into tuples whose shape matches each query.
+type_complexity = "allow"
+
 [profile.release]
 codegen-units = 4
 strip = true
