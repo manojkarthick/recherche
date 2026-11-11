@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ heading }} – recherche</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/htmx.min.js"></script>
+<script src="/assets/app.js" defer></script>
+</head>
+<body class="entity-page">
+<header class="bar">
+  <a class="wordmark small" href="/">recherche</a>
+  <a class="back" href="/">Search</a>
+</header>
+<header class="entity-head">
+  <p class="kind">{{ kind }}</p>
+  <h1>{{ heading }}</h1>
+  {% if let Some(h) = search_href %}<a class="scoped" href="{{ h }}">Search within these sessions</a>{% endif %}
+</header>
+<main id="results">{{ results_html|safe }}</main>
+</body>
+</html>

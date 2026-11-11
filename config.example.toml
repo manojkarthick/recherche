@@ -1,0 +1,45 @@
+# Copy to $XDG_CONFIG_HOME/recherche/config.toml. Every key is optional;
+# the values below are the defaults.
+
+listen = "127.0.0.1:7777"
+# Required when `listen` is not a loopback address, for example a tailnet IP.
+# Open the UI once with ?token=<token>; a cookie keeps you signed in.
+# token = "..."
+
+# Ticket IDs are taken from your prompts, branch names and commit subjects.
+ticket_patterns = ['\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b']
+# Worktree layouts, so a worktree of a repo groups with the repo even when no
+# session recorded its remote. `repo` names the repo; `root` is the main checkout.
+worktree_patterns = [
+  '/worktrees/(?P<repo>[^/]+)/[^/]+',
+  '^(?P<root>.*/(?P<repo>[^/]+))/\.claude/worktrees/[^/]+',
+]
+
+[sources]
+# claude_dir = "~/.claude"   # default: $CLAUDE_CONFIG_DIR, then ~/.claude
+# codex_dir = "~/.codex"     # default: $CODEX_HOME, then ~/.codex
+poll_seconds = 30
+
+[search]
+vectors = true
+rerank = true
+rerank_model = "jina-turbo"   # or "bge-base": larger and slower
+rerank_top = 20
+model_idle_seconds = 300
+
+[llm]
+enabled = true
+base_url = "https://openrouter.ai/api/v1"   # any OpenAI-compatible API
+api_key_env = "OPENROUTER_API_KEY"
+model = "deepseek/deepseek-v4.1-flash"     # any OpenRouter model ID
+rewrite_model = ""                         # empty: use `model`
+deny_data_collection = true                # only hosts that don't store prompts
+monthly_budget_usd = 5.0
+# Only used for estimates and when the API reports no cost (OpenRouter does).
+price_input_per_mtok = 0.051
+price_output_per_mtok = 0.567
+rewrite = true
+summaries = true
+summarize_sources = ["claude", "codex"]
+summarize_exclude_paths = []  # cwd substrings never sent for summaries
+idle_minutes = 20
