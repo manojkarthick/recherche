@@ -13,6 +13,8 @@
   --mark: #f7e27a;
   --claude: #7a3e6b;
   --codex: #2f6b4f;
+  --repo: #236f73;
+  --branch: #865f16;
   --warn: #9a3412;
   --serif: Charter, "Iowan Old Style", "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -33,6 +35,8 @@
     --mark: rgba(247, 226, 122, 0.32);
     --claude: #d79bc8;
     --codex: #8fd0ae;
+    --repo: #7dcbd0;
+    --branch: #dfbe7d;
     --warn: #f0a37e;
   }
 }
@@ -119,8 +123,14 @@ main#results { max-width: 1060px; margin: 0 auto; padding: 8px 28px 64px; }
   background: var(--sheet);
   max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-a.chip:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
-.chip.repo { font-weight: 600; }
+a.chip:hover { border-color: var(--chip-accent, var(--accent)); color: var(--chip-accent, var(--accent)); text-decoration: none; }
+.chip.repo { --chip-accent: var(--repo); font-weight: 600; }
+.chip.branch { --chip-accent: var(--branch); }
+.chip.repo, .chip.branch {
+  color: var(--chip-accent);
+  border-color: color-mix(in srgb, var(--chip-accent) 45%, var(--rule));
+  background: color-mix(in srgb, var(--chip-accent) 8%, var(--sheet));
+}
 .chip.inferred { border-style: dashed; }
 .chip.pr { border-color: color-mix(in srgb, var(--accent) 45%, var(--rule)); color: var(--accent); }
 .chip.ticket { background: var(--accent-soft); border-color: transparent; }
