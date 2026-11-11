@@ -34,10 +34,6 @@ api_key_env = "OPENROUTER_API_KEY"
 model = "deepseek/deepseek-v4.1-flash"     # any OpenRouter model ID
 rewrite_model = ""                         # empty: use `model`
 deny_data_collection = true                # only hosts that don't store prompts
-monthly_budget_usd = 5.0
-# Only used for estimates and when the API reports no cost (OpenRouter does).
-price_input_per_mtok = 0.051
-price_output_per_mtok = 0.567
 rewrite = true
 summaries = true
 summarize_sources = ["claude", "codex"]

@@ -1,7 +1,7 @@
 //! Cloud LLM calls through OpenRouter (any OpenAI-compatible chat
-//! completions API works) for query rewrite and session summaries. Every call is checked against the monthly budget first, and
-//! search keeps working when the key is missing, the API is down or the
-//! budget is spent.
+//! completions API works) for query rewrite and session summaries. Search
+//! keeps working when the key is missing or the API is down. Spend limits are
+//! left to the provider (OpenRouter key limits).
 
 use crate::config;
 use crate::store;
@@ -33,6 +33,20 @@ pub struct Rewrite {
     pub outcome: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Prices {
+    pub input: f64,
+    pub output: f64,
+}
+
+impl Prices {
+    /// Rough cost of one call: about 3 characters per input token, and the
+    /// full `max_tokens` of output.
+    pub fn estimate(&self, input_chars: usize, max_tokens: i64) -> f64 {
+        ((input_chars / 3) as f64 + 50.0) * self.input + max_tokens as f64 * self.output
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Summary {
     pub title: String,
@@ -57,6 +71,25 @@ pub const KINDS: &[&str] = &[
     "docs",
 ];
 pub const OUTCOMES: &[&str] = &["fixed", "shipped", "investigated", "planned", "abandoned"];
+
+const SUMMARY_MAX_TOKENS: i64 = 400;
+
+fn summary_system() -> String {
+    format!(
+        "You summarize one coding-agent session so its owner can find it later by a vague memory. Reply with one JSON object and nothing else: \
+         {{\"title\": a specific title under 80 characters, \
+         \"summary\": a string containing 2 to 4 short plain bullet points, each starting with '- ' and separated by a newline; \
+         each bullet captures one useful fact about the work, a decision or change, or the result; \
+         use no headings or labels, mention unfinished work only when important, and name relevant repos, PRs, tickets, tools and error messages, \
+         \"kind\": one of {KINDS:?}, \"outcome\": one of {OUTCOMES:?}, \"tags\": up to 5 short lowercase topic tags}}."
+    )
+}
+
+/// Upper-bound cost of summarizing one digest: the full output allowance is
+/// counted even though most summaries stop well short of it.
+pub fn summary_estimate(p: &Prices, digest_chars: usize) -> f64 {
+    p.estimate(summary_system().len() + digest_chars, SUMMARY_MAX_TOKENS)
+}
 
 impl Llm {
     pub fn new(cfg: config::Llm, db: PathBuf) -> Self {
@@ -88,24 +121,40 @@ impl Llm {
         self.available() && self.cfg.summaries
     }
 
-    fn cost(&self, input: i64, output: i64) -> f64 {
-        input as f64 / 1e6 * self.cfg.price_input_per_mtok
-            + output as f64 / 1e6 * self.cfg.price_output_per_mtok
-    }
-
-    pub fn spent(&self) -> f64 {
-        store::open(&self.db)
-            .and_then(|c| store::month_spend(&c))
-            .unwrap_or(0.0)
-    }
-
-    pub fn estimate(&self, input_chars: usize, max_tokens: i64) -> f64 {
-        self.cost((input_chars / 3) as i64 + 50, max_tokens)
+    /// Current USD-per-token prices of the summary model, from OpenRouter's
+    /// public model list (no key needed).
+    pub async fn prices(&self) -> Result<Prices> {
+        let v: Value = self
+            .http
+            .get(format!(
+                "{}/models",
+                self.cfg.base_url.trim_end_matches('/')
+            ))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let m = v["data"]
+            .as_array()
+            .and_then(|ms| ms.iter().find(|m| m["id"] == self.cfg.model.as_str()))
+            .ok_or_else(|| anyhow!("{} is not in the model list", self.cfg.model))?;
+        // Prices are decimal strings, in USD per token.
+        let price = |k: &str| -> Result<f64> {
+            m["pricing"][k]
+                .as_str()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| anyhow!("{} has no {k} price", self.cfg.model))
+        };
+        Ok(Prices {
+            input: price("prompt")?,
+            output: price("completion")?,
+        })
     }
 
     async fn complete(
         &self,
-        purpose: &str,
         model: &str,
         system: &str,
         user: &str,
@@ -118,21 +167,11 @@ impl Llm {
         let key = self
             .key()
             .ok_or_else(|| anyhow!("{} is not set", self.cfg.api_key_env))?;
-        let worst = self.estimate(system.len() + user.len(), max_tokens);
-        let spent = self.spent();
-        if spent + worst > self.cfg.monthly_budget_usd {
-            bail!(
-                "monthly LLM budget reached (${spent:.2} of ${:.2})",
-                self.cfg.monthly_budget_usd
-            );
-        }
         let mut body = json!({
             "model": model,
             "max_tokens": max_tokens,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "response_format": {"type": "json_object"},
-            // OpenRouter: report the real cost of the call in `usage.cost`.
-            "usage": {"include": true},
             // Reasoning models such as DeepSeek V4 otherwise spend the whole
             // `max_tokens` budget thinking and return empty content.
             "reasoning": {"enabled": false},
@@ -161,14 +200,7 @@ impl Llm {
                 v["error"]["message"].as_str().unwrap_or("")
             );
         }
-        let input = v["usage"]["prompt_tokens"].as_i64().unwrap_or(0);
         let output = v["usage"]["completion_tokens"].as_i64().unwrap_or(0);
-        // Prefer the cost the API reports; fall back to the configured prices.
-        let usd = v["usage"]["cost"]
-            .as_f64()
-            .unwrap_or_else(|| self.cost(input, output));
-        let db = store::open(&self.db)?;
-        store::record_usage(&db, purpose, model, input, output, usd)?;
         let text = v["choices"][0]["message"]["content"]
             .as_str()
             .unwrap_or("")
@@ -212,14 +244,7 @@ impl Llm {
             &self.cfg.rewrite_model
         };
         let text = self
-            .complete(
-                "rewrite",
-                model,
-                &system,
-                &user,
-                200,
-                Duration::from_secs(4),
-            )
+            .complete(model, &system, &user, 200, Duration::from_secs(4))
             .await?;
         let rw: Rewrite = serde_json::from_str(
             json_object(&text).ok_or_else(|| anyhow!("rewrite reply had no JSON"))?,
@@ -237,21 +262,13 @@ impl Llm {
     }
 
     pub async fn summarize(&self, digest: &str) -> Result<Summary> {
-        let system = format!(
-            "You summarize one coding-agent session so its owner can find it later by a vague memory. Reply with one JSON object and nothing else: \
-             {{\"title\": a specific title under 80 characters, \
-             \"summary\": a string containing 2 to 4 short plain bullet points, each starting with '- ' and separated by a newline; \
-             each bullet captures one useful fact about the work, a decision or change, or the result; \
-             use no headings or labels, mention unfinished work only when important, and name relevant repos, PRs, tickets, tools and error messages, \
-             \"kind\": one of {KINDS:?}, \"outcome\": one of {OUTCOMES:?}, \"tags\": up to 5 short lowercase topic tags}}."
-        );
+        let system = summary_system();
         let text = self
             .complete(
-                "summary",
                 &self.cfg.model,
                 &system,
                 digest,
-                400,
+                SUMMARY_MAX_TOKENS,
                 Duration::from_secs(60),
             )
             .await?;
