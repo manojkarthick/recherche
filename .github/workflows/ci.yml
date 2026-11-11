@@ -17,23 +17,17 @@ env:
 
 jobs:
   check:
-    name: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: rustfmt, clippy
+      - run: cargo fmt --check
       - uses: Swatinem/rust-cache@v2
         with:
           # ort-sys links the ONNX Runtime it downloads into this directory,
           # so it must be restored together with the cached build outputs.
-          cache-directories: |
-            ~/.cache/ort.pyke.io
-            ~/Library/Caches/ort.pyke.io
+          cache-directories: ~/.cache/ort.pyke.io
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
