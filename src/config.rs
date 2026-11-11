@@ -45,11 +45,6 @@ pub struct Llm {
     pub rewrite_model: String,
     /// Ask OpenRouter to route only to hosts that do not store or train on prompts.
     pub deny_data_collection: bool,
-    pub monthly_budget_usd: f64,
-    /// USD per million tokens. Only used when the API does not report a
-    /// call's cost (OpenRouter does), and for estimates.
-    pub price_input_per_mtok: f64,
-    pub price_output_per_mtok: f64,
     pub rewrite: bool,
     pub summaries: bool,
     /// Sources whose sessions may be sent for summaries.
@@ -119,9 +114,6 @@ impl Default for Llm {
             model: "deepseek/deepseek-v4.1-flash".into(),
             rewrite_model: String::new(),
             deny_data_collection: true,
-            monthly_budget_usd: 5.0,
-            price_input_per_mtok: 0.051,
-            price_output_per_mtok: 0.567,
             rewrite: true,
             summaries: true,
             summarize_sources: vec!["claude".into(), "codex".into()],

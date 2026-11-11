@@ -146,8 +146,7 @@ pub fn digest(c: &Connection, id: &str) -> Result<String> {
     Ok(out)
 }
 
-/// Summarizes up to `limit` candidates. Stops at the budget or on the first
-/// API failure, because the next call would most likely fail the same way.
+/// Summarizes up to `limit` candidates. Stops on the first API failure, because the next call would most likely fail the same way.
 /// With `progress`, prints one line per session to stderr (for the CLI).
 pub async fn run(
     llm: &Llm,
@@ -173,10 +172,9 @@ pub async fn run(
             Ok(s) => {
                 if progress {
                     eprintln!(
-                        "[{}/{total}] {}  (${:.4} spent this month, {}s elapsed)",
+                        "[{}/{total}] {}  ({}s elapsed)",
                         i + 1,
                         clip_chars(&s.title, 70),
-                        llm.spent(),
                         started.elapsed().as_secs()
                     );
                 }
