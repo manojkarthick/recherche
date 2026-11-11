@@ -258,6 +258,17 @@ impl Catalog {
         Ok(cat)
     }
 
+    pub fn recent(&self, since: Option<i64>, limit: usize) -> Vec<&SessionMeta> {
+        let mut sessions: Vec<_> = self
+            .sessions
+            .values()
+            .filter(|s| since.is_none_or(|since| s.ended >= since))
+            .collect();
+        sessions.sort_by(|a, b| b.ended.cmp(&a.ended).then_with(|| a.id.cmp(&b.id)));
+        sessions.truncate(limit);
+        sessions
+    }
+
     pub fn repo_name(&self, s: &SessionMeta) -> Option<String> {
         s.repo_key.as_ref().map(|k| {
             self.repos
@@ -328,4 +339,43 @@ pub fn set_meta(c: &Connection, key: &str, value: &str) -> Result<()> {
         params![key, value],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_sessions_filter_activity_before_applying_the_limit() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        for n in 0..125 {
+            c.execute(
+                "INSERT INTO sessions (id, source, host, archive_path, started, ended, turn_count)
+                 VALUES (?, 'codex', '', '', 0, ?, 1)",
+                params![format!("session-{n:03}"), n],
+            )
+            .unwrap();
+        }
+        c.execute_batch(
+            "INSERT INTO sessions (id, source, host, archive_path, ended, turn_count, skip) VALUES
+             ('skipped', 'codex', '', '', 1000, 1, 1),
+             ('empty', 'codex', '', '', 1000, 0, 0);",
+        )
+        .unwrap();
+
+        let cat = Catalog::load(&c).unwrap();
+        let all = cat.recent(None, 200);
+        assert_eq!(all.len(), 125);
+        assert_eq!(all.first().unwrap().id, "session-124");
+        assert_eq!(all.last().unwrap().id, "session-000");
+        assert!(all.windows(2).all(|s| s[0].ended > s[1].ended));
+
+        let recent = cat.recent(Some(120), 10);
+        assert_eq!(recent.len(), 5);
+        assert_eq!(recent.last().unwrap().ended, 120);
+        assert_eq!(cat.recent(Some(120), 2).len(), 2);
+        assert!(cat.recent(Some(125), 10).is_empty());
+        assert!(cat.recent(None, 0).is_empty());
+    }
 }
