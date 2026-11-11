@@ -79,7 +79,8 @@ enum Cmd {
     /// by half since their last one, however old they are.
     Summarize {
         /// Regenerate summaries even for sessions that already have one:
-        /// the N most recently ended sessions, or every session without N.
+        /// the N sessions with the most recent activity, or every session without N.
+        /// Bypasses the inactivity window, including sessions still in progress.
         #[arg(long, value_name = "N", num_args = 0..=1)]
         redo: Option<Option<usize>>,
         /// Show how many sessions and the estimated cost, then stop.
