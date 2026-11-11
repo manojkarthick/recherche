@@ -49,7 +49,7 @@ pub fn run(e: Arc<Engine>) {
         e.models.unload_idle();
         if last_summary.elapsed() >= SUMMARY_EVERY && e.llm.summaries_enabled() {
             last_summary = Instant::now();
-            match rt.block_on(crate::summarize::run(&e.llm, &e.cfg, &e.db, false, 20, false)) {
+            match rt.block_on(crate::summarize::run(&e.llm, &e.cfg, &e.db, false, false, 20, false)) {
                 Ok(0) => {}
                 Ok(n) => {
                     tracing::info!("summarized {n} sessions");

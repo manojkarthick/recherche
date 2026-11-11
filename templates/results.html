@@ -27,7 +27,7 @@
     <span class="agent {{ r.agent }}">{% if r.agent == "claude" %}Claude Code{% else %}Codex{% endif %}{% if r.is_sub %} subagent{% endif %}</span>
     {% for c in r.chips %}<a class="{{ c.class }}" href="{{ c.href }}" title="{{ c.title }}">{{ c.label }}</a>{% endfor %}
   </div>
-  {% if let Some(b) = r.blurb %}<p class="blurb">{{ b|safe }}</p>{% endif %}
+  {% if let Some(b) = r.blurb %}<div class="blurb">{{ b|safe }}</div>{% endif %}
   {% for s in r.snippets %}<p class="snippet">{{ s|safe }}</p>{% endfor %}
   <div class="foot">
     <button type="button" class="copy" data-copy="{{ r.resume }}" title="{{ r.resume }}">Copy resume command</button>

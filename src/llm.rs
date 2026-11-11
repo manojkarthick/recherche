@@ -171,7 +171,9 @@ impl Llm {
         let system = format!(
             "You summarize one coding-agent session so its owner can find it later by a vague memory. Reply with one JSON object and nothing else: \
              {{\"title\": a specific title under 80 characters, \
-             \"summary\": 2 to 4 plain sentences on what was worked on, what was decided or changed, and how it ended; name repos, PRs, tickets, tools and error messages, \
+             \"summary\": a string containing 2 to 4 short plain bullet points, each starting with '- ' and separated by a newline; \
+             each bullet captures one useful fact about the work, a decision or change, or the result; \
+             use no headings or labels, mention unfinished work only when important, and name relevant repos, PRs, tickets, tools and error messages, \
              \"kind\": one of {KINDS:?}, \"outcome\": one of {OUTCOMES:?}, \"tags\": up to 5 short lowercase topic tags}}."
         );
         let text = self.complete("summary", &self.cfg.model, &system, digest, 400, Duration::from_secs(60)).await?;
