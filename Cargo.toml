@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
+ammonia = "4"
 askama = "0.16"
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
@@ -15,6 +16,7 @@ fastembed = "7.7"
 futures = "0.3"
 gethostname = "1"
 notify = "8"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 regex = "1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
