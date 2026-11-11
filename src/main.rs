@@ -42,6 +42,18 @@ enum Cmd {
         #[arg(long)]
         rebuild: bool,
     },
+    /// List sessions, newest activity first.
+    List {
+        /// Maximum number of sessions to show.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// YYYY-MM-DD, or a duration such as 7d, 2w, 3m or 1y.
+        #[arg(long, value_name = "PERIOD", value_parser = parse_since)]
+        since: Option<i64>,
+        /// Print a JSON array of session metadata.
+        #[arg(long)]
+        json: bool,
+    },
     /// Search from the command line.
     Search {
         query: Vec<String>,
@@ -127,6 +139,41 @@ fn main() -> Result<()> {
                 s.bad_lines,
                 t.elapsed().as_secs_f32()
             );
+        }
+        Cmd::List { limit, since, json } => {
+            let engine = search::Engine::open(cfg)?;
+            // Listing needs current metadata, but no embeddings.
+            if let Err(e) = engine.refresh_with(false, false) {
+                tracing::debug!("catch-up index skipped: {e:#}");
+            }
+            let cat = engine.catalog();
+            let sessions = cat.recent(since, limit);
+            if json {
+                let out: Vec<_> = sessions
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "id": s.id, "agent": s.source, "title": s.title,
+                            "repo": cat.repo_name(s), "cwd": s.cwd,
+                            "started": s.started, "ended": s.ended,
+                            "resume": resume_command(s),
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                for s in &sessions {
+                    println!(
+                        "{}  {:<6} {:<28} {}",
+                        util::fmt_date(s.ended),
+                        s.source,
+                        model::clip_chars(&cat.repo_name(s).unwrap_or_default(), 28),
+                        model::clip_chars(&s.title, 80)
+                    );
+                    println!("    {}", resume_command(s));
+                }
+            }
+            eprintln!("{} sessions listed", sessions.len());
         }
         Cmd::Search {
             query,
@@ -291,6 +338,11 @@ fn main() -> Result<()> {
         Cmd::Doctor => doctor(cfg)?,
     }
     Ok(())
+}
+
+fn parse_since(value: &str) -> Result<i64, String> {
+    query::parse_date(value)
+        .ok_or_else(|| "expected YYYY-MM-DD or a duration such as 7d, 2w, 3m or 1y".to_string())
 }
 
 fn print_results(
@@ -461,4 +513,55 @@ fn doctor(cfg: config::Config) -> Result<()> {
         if key { "set" } else { "not set" },
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_defaults_and_filters() {
+        let cli = Cli::try_parse_from(["recherche", "list"]).unwrap();
+        assert!(matches!(
+            cli.cmd,
+            Cmd::List {
+                limit: 10,
+                since: None,
+                json: false,
+            }
+        ));
+
+        let cli = Cli::try_parse_from([
+            "recherche",
+            "list",
+            "--limit",
+            "125",
+            "--since",
+            "2026-01-02",
+            "--json",
+        ])
+        .unwrap();
+        let Cmd::List { limit, since, json } = cli.cmd else {
+            panic!("expected list command");
+        };
+        assert_eq!(limit, 125);
+        assert_eq!(since, query::parse_date("2026-01-02"));
+        assert!(json);
+    }
+
+    #[test]
+    fn list_rejects_invalid_arguments() {
+        for (flag, value) in [
+            ("--limit", "-1"),
+            ("--limit", "many"),
+            ("--since", "yesterday"),
+            ("--since", "2026-02-30"),
+            ("--since", "9223372036854775807y"),
+        ] {
+            assert!(
+                Cli::try_parse_from(["recherche", "list", flag, value]).is_err(),
+                "accepted {flag} {value}"
+            );
+        }
+    }
 }

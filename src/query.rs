@@ -372,7 +372,7 @@ fn day_start(d: NaiveDate) -> i64 {
         .unwrap_or(0)
 }
 
-fn parse_date(s: &str) -> Option<i64> {
+pub(crate) fn parse_date(s: &str) -> Option<i64> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .ok()
         .map(day_start)
@@ -381,12 +381,14 @@ fn parse_date(s: &str) -> Option<i64> {
             let n: i64 = n.parse().ok()?;
             let days = match unit {
                 "d" => n,
-                "w" => n * 7,
-                "m" => n * 30,
-                "y" => n * 365,
+                "w" => n.checked_mul(7)?,
+                "m" => n.checked_mul(30)?,
+                "y" => n.checked_mul(365)?,
                 _ => return None,
             };
-            Some(chrono::Utc::now().timestamp() - days * 86_400)
+            chrono::Utc::now()
+                .timestamp()
+                .checked_sub(days.checked_mul(86_400)?)
         })
 }
 
@@ -504,6 +506,18 @@ mod tests {
         let (from, to) = q.time_boost.unwrap();
         let now = chrono::Utc::now().timestamp();
         assert!(from < now - 4 * 86_400 && to < now && to > now - 6 * 86_400);
+    }
+
+    #[test]
+    fn dates_and_durations_use_the_existing_since_syntax() {
+        let date = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+        assert_eq!(parse_date("2026-01-02"), Some(day_start(date)));
+        for (period, days) in [("7d", 7), ("2w", 14), ("3m", 90), ("1y", 365)] {
+            let before = chrono::Utc::now().timestamp();
+            let cutoff = parse_date(period).unwrap();
+            let after = chrono::Utc::now().timestamp();
+            assert!((before - days * 86_400..=after - days * 86_400).contains(&cutoff));
+        }
     }
 
     #[test]
