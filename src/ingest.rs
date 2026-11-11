@@ -6,13 +6,13 @@
 //! the archive as the original grows. Changed files are reparsed whole, which
 //! takes milliseconds even for large sessions and keeps turn grouping simple.
 
-use crate::config::{data_dir, Config};
+use crate::config::{Config, data_dir};
 use crate::extract;
 use crate::model::{Fact, ParsedSession};
 use crate::util::hash;
 use anyhow::Result;
 use regex::Regex;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
@@ -52,7 +52,9 @@ fn discover(cfg: &Config) -> Vec<(&'static str, PathBuf, PathBuf)> {
 }
 
 fn walk(dir: &Path, f: &mut dyn FnMut(&Path)) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         match e.file_type() {
@@ -71,11 +73,19 @@ fn prefix_hash(path: &Path) -> Result<String> {
 }
 
 /// Copies new bytes into the archive. Returns false when nothing changed.
-fn sync_archive(src: &Path, dst: &Path, old: Option<&(i64, String)>, size: i64, prefix: &str) -> Result<()> {
+fn sync_archive(
+    src: &Path,
+    dst: &Path,
+    old: Option<&(i64, String)>,
+    size: i64,
+    prefix: &str,
+) -> Result<()> {
     std::fs::create_dir_all(dst.parent().unwrap())?;
     let archived = std::fs::metadata(dst).map(|m| m.len() as i64).ok();
     match (old, archived) {
-        (Some((old_size, old_prefix)), Some(a)) if old_prefix == prefix && size >= *old_size && a == *old_size => {
+        (Some((old_size, old_prefix)), Some(a))
+            if old_prefix == prefix && size >= *old_size && a == *old_size =>
+        {
             let mut from = std::fs::File::open(src)?;
             from.seek(SeekFrom::Start(*old_size as u64))?;
             let mut to = std::fs::OpenOptions::new().append(true).open(dst)?;
@@ -112,14 +122,23 @@ impl<'a> Ingester<'a> {
     pub fn run(&self, c: &mut Connection, rebuild: bool) -> Result<Stats> {
         let mut stats = Stats::default();
         let known: HashMap<String, (i64, i64, i64, String, String)> = {
-            let mut st = c.prepare("SELECT src_path, size, mtime, inode, prefix_hash, archive_path FROM files")?;
-            st.query_map([], |r| Ok((r.get::<_, String>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))))?
-                .collect::<Result<_, _>>()?
+            let mut st = c.prepare(
+                "SELECT src_path, size, mtime, inode, prefix_hash, archive_path FROM files",
+            )?;
+            st.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?),
+                ))
+            })?
+            .collect::<Result<_, _>>()?
         };
         let mut todo: Vec<(&'static str, String, PathBuf)> = vec![];
         for (source, src, rel) in discover(self.cfg) {
             stats.files += 1;
-            let Ok(meta) = std::fs::metadata(&src) else { continue };
+            let Ok(meta) = std::fs::metadata(&src) else {
+                continue;
+            };
             let key = src.to_string_lossy().into_owned();
             let size = meta.len() as i64;
             let mtime = meta.mtime() * 1000 + meta.mtime_nsec() / 1_000_000;
@@ -145,12 +164,19 @@ impl<'a> Ingester<'a> {
         }
         if rebuild {
             // Archived files whose originals are gone still get reparsed.
-            let seen: std::collections::HashSet<String> = todo.iter().map(|t| t.1.clone()).collect();
+            let seen: std::collections::HashSet<String> =
+                todo.iter().map(|t| t.1.clone()).collect();
             let mut st = c.prepare("SELECT source, src_path, archive_path FROM files")?;
-            let rows: Vec<(String, String, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+            let rows: Vec<(String, String, String)> = st
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<Result<_, _>>()?;
             for (source, src, arch) in rows {
                 if !seen.contains(&src) && Path::new(&arch).exists() {
-                    let source = if source == "claude" { "claude" } else { "codex" };
+                    let source = if source == "claude" {
+                        "claude"
+                    } else {
+                        "codex"
+                    };
                     todo.push((source, src, PathBuf::from(arch)));
                 }
             }
@@ -168,7 +194,10 @@ impl<'a> Ingester<'a> {
             }
             let facts = extract::extract(&ps, self.cfg, &self.tickets);
             if self.store(c, &ps, &facts, &dst, bytes.len() as i64)? {
-                c.execute("UPDATE files SET session_id = ? WHERE src_path = ?", params![ps.id, src])?;
+                c.execute(
+                    "UPDATE files SET session_id = ? WHERE src_path = ?",
+                    params![ps.id, src],
+                )?;
                 stats.sessions += 1;
             }
         }
@@ -176,18 +205,35 @@ impl<'a> Ingester<'a> {
         Ok(stats)
     }
 
-    fn store(&self, c: &mut Connection, ps: &ParsedSession, facts: &[Fact], archive: &Path, bytes: i64) -> Result<bool> {
+    fn store(
+        &self,
+        c: &mut Connection,
+        ps: &ParsedSession,
+        facts: &[Fact],
+        archive: &Path,
+        bytes: i64,
+    ) -> Result<bool> {
         let archive = archive.to_string_lossy();
         // Codex can move a session to archived_sessions; keep the fuller copy.
-        let existing: Option<(String, i64)> =
-            c.query_row("SELECT archive_path, bytes FROM sessions WHERE id = ?", [&ps.id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        let existing: Option<(String, i64)> = c
+            .query_row(
+                "SELECT archive_path, bytes FROM sessions WHERE id = ?",
+                [&ps.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
         if let Some((path, b)) = existing
-            && path != archive && b > bytes {
-                return Ok(false);
-            }
+            && path != archive
+            && b > bytes
+        {
+            return Ok(false);
+        }
         let title_is_prompt = ps.title.is_none();
         let title = ps.title.clone().or_else(|| {
-            ps.turns.iter().find(|t| !t.user.is_empty()).map(|t| crate::model::clip_chars(t.user.lines().next().unwrap_or(""), 100))
+            ps.turns
+                .iter()
+                .find(|t| !t.user.is_empty())
+                .map(|t| crate::model::clip_chars(t.user.lines().next().unwrap_or(""), 100))
         });
         let tx = c.transaction()?;
         tx.execute(
@@ -222,7 +268,8 @@ impl<'a> Ingester<'a> {
                 "INSERT INTO turns (session_id, idx, ts, branch, cwd, user_text, assistant_text, tool_text, files, commands, errors, tools_json, ukey, chash)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )?;
-            let mut blk = tx.prepare("INSERT OR IGNORE INTO blocks (hash, session_id) VALUES (?, ?)")?;
+            let mut blk =
+                tx.prepare("INSERT OR IGNORE INTO blocks (hash, session_id) VALUES (?, ?)")?;
             for (i, t) in ps.turns.iter().enumerate() {
                 let mut tool_text = String::new();
                 let mut commands = vec![];
@@ -242,7 +289,16 @@ impl<'a> Ingester<'a> {
                     if tc.is_error {
                         errors.extend(tc.output.lines().take(5));
                     } else {
-                        errors.extend(tc.output.lines().filter(|l| l.contains("error") || l.contains("Error") || l.contains("panicked")).take(3));
+                        errors.extend(
+                            tc.output
+                                .lines()
+                                .filter(|l| {
+                                    l.contains("error")
+                                        || l.contains("Error")
+                                        || l.contains("panicked")
+                                })
+                                .take(3),
+                        );
                     }
                 }
                 let tools_json = serde_json::to_string(
@@ -250,7 +306,11 @@ impl<'a> Ingester<'a> {
                 )?;
                 let ts = t.ts.map(|x| x.timestamp());
                 // The same prompt at the same time in two sessions is a fork or a replay.
-                let ukey = if t.user.is_empty() { hash(&[&ps.id, &i.to_string()]) } else { hash(&[&t.user, &ts.unwrap_or(0).to_string()]) };
+                let ukey = if t.user.is_empty() {
+                    hash(&[&ps.id, &i.to_string()])
+                } else {
+                    hash(&[&t.user, &ts.unwrap_or(0).to_string()])
+                };
                 let chash = hash(&[&t.user, &t.assistant]);
                 ins.execute(params![
                     ps.id,
@@ -274,7 +334,9 @@ impl<'a> Ingester<'a> {
             }
             let mut ent = tx.prepare("INSERT OR REPLACE INTO entities (session_id, kind, key, display, origin, strength) VALUES (?, ?, ?, ?, ?, ?)")?;
             for f in facts {
-                ent.execute(params![ps.id, f.kind, f.key, f.display, f.origin, f.strength])?;
+                ent.execute(params![
+                    ps.id, f.kind, f.key, f.display, f.origin, f.strength
+                ])?;
             }
         }
         tx.commit()?;
@@ -288,15 +350,23 @@ impl<'a> Ingester<'a> {
     /// exactly one.
     fn link_repos(&self, c: &mut Connection) -> Result<()> {
         let sessions: Vec<(String, Option<String>, Option<String>, Option<String>)> = {
-            let mut st = c.prepare("SELECT id, cwd, repo_key, repo_origin FROM sessions WHERE skip = 0")?;
-            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<Result<_, _>>()?
+            let mut st =
+                c.prepare("SELECT id, cwd, repo_key, repo_origin FROM sessions WHERE skip = 0")?;
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<Result<_, _>>()?
         };
         let mut best: HashMap<String, (String, String)> = HashMap::new();
         {
             let mut st = c.prepare(
                 "SELECT session_id, key, origin FROM entities WHERE kind = 'repo' AND strength >= 2 ORDER BY session_id, strength DESC, origin DESC",
             )?;
-            for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))? {
+            for row in st.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })? {
                 let (sid, key, origin) = row?;
                 best.entry(sid).or_insert((key, origin));
             }
@@ -304,15 +374,23 @@ impl<'a> Ingester<'a> {
         let tx = c.transaction()?;
         for (sid, cwd, _, _) in &sessions {
             if let (Some((key, _)), Some(cwd)) = (best.get(sid), cwd) {
-                tx.execute("INSERT OR REPLACE INTO cwd_repo (cwd, repo_key) VALUES (?, ?)", params![cwd, key])?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO cwd_repo (cwd, repo_key) VALUES (?, ?)",
+                    params![cwd, key],
+                )?;
                 if let Some(root) = self.worktree_root(cwd) {
-                    tx.execute("INSERT OR IGNORE INTO cwd_repo (cwd, repo_key) VALUES (?, ?)", params![root, key])?;
+                    tx.execute(
+                        "INSERT OR IGNORE INTO cwd_repo (cwd, repo_key) VALUES (?, ?)",
+                        params![root, key],
+                    )?;
                 }
             }
         }
         let cwd_repo: Vec<(String, String)> = {
-            let mut st = tx.prepare("SELECT cwd, repo_key FROM cwd_repo ORDER BY length(cwd) DESC")?;
-            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
+            let mut st =
+                tx.prepare("SELECT cwd, repo_key FROM cwd_repo ORDER BY length(cwd) DESC")?;
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<_, _>>()?
         };
         let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
         for (_, key) in &cwd_repo {
@@ -326,7 +404,10 @@ impl<'a> Ingester<'a> {
             let (key, origin) = if let Some((k, o)) = best.get(&sid) {
                 (k.clone(), o.clone())
             } else if let Some(cwd) = &cwd {
-                if let Some((_, k)) = cwd_repo.iter().find(|(p, _)| cwd == p || cwd.starts_with(&format!("{p}/"))) {
+                if let Some((_, k)) = cwd_repo
+                    .iter()
+                    .find(|(p, _)| cwd == p || cwd.starts_with(&format!("{p}/")))
+                {
                     (k.clone(), "inferred".into())
                 } else {
                     let (pk, name) = extract::repo_from_path(cwd, &self.worktrees);
@@ -338,8 +419,13 @@ impl<'a> Ingester<'a> {
             } else {
                 continue;
             };
-            if old_key.as_deref() != Some(key.as_str()) || old_origin.as_deref() != Some(origin.as_str()) {
-                tx.execute("UPDATE sessions SET repo_key = ?, repo_origin = ?, dirty = 1 WHERE id = ?", params![key, origin, sid])?;
+            if old_key.as_deref() != Some(key.as_str())
+                || old_origin.as_deref() != Some(origin.as_str())
+            {
+                tx.execute(
+                    "UPDATE sessions SET repo_key = ?, repo_origin = ?, dirty = 1 WHERE id = ?",
+                    params![key, origin, sid],
+                )?;
             }
         }
         tx.commit()?;
@@ -347,11 +433,18 @@ impl<'a> Ingester<'a> {
     }
 
     fn worktree_root(&self, cwd: &str) -> Option<String> {
-        self.worktrees.iter().find_map(|re| re.captures(cwd).and_then(|c| c.name("root")).map(|m| m.as_str().to_string()))
+        self.worktrees.iter().find_map(|re| {
+            re.captures(cwd)
+                .and_then(|c| c.name("root"))
+                .map(|m| m.as_str().to_string())
+        })
     }
 }
 
 /// Paragraphs long enough to be boilerplate if they repeat across sessions.
 pub fn paragraphs(text: &str) -> Vec<String> {
-    text.split("\n\n").map(|p| p.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|p| p.len() >= 80).collect()
+    text.split("\n\n")
+        .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|p| p.len() >= 80)
+        .collect()
 }
