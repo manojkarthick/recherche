@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, TimeZone};
+use chrono::{Local, TimeZone};
 use sha2::{Digest, Sha256};
 
 pub fn hash(parts: &[&str]) -> String {
@@ -9,15 +9,6 @@ pub fn hash(parts: &[&str]) -> String {
     }
     let d = h.finalize();
     d[..12].iter().map(|b| format!("{b:02x}")).collect()
-}
-
-pub fn month_start() -> i64 {
-    let now = Local::now();
-    Local
-        .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
-        .single()
-        .map(|d| d.timestamp())
-        .unwrap_or(0)
 }
 
 pub fn fmt_date(ts: i64) -> String {
