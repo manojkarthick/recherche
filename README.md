@@ -121,3 +121,16 @@ expect = ["<session id>"]
 ```
 
 `recherche eval` reports recall@5, recall@10 and MRR per class for keyword only, keyword plus vectors, and with the reranker (`--rewrite` adds the LLM rewrite). Results you mark with "This was it" are included as the `feedback` class.
+
+## Try it on made-up sessions
+
+`scripts/fake_sessions.py` writes 17 made-up Claude Code and Codex sessions, with summaries, a subagent, failing tool calls and awkward content, into a scratch directory, and an `env.sh` that points recherche at them instead of your own sessions. Use it to try UI changes or take screenshots without showing real work:
+
+```sh
+uv run scripts/fake_sessions.py create /tmp/recherche-demo
+. /tmp/recherche-demo/env.sh
+cargo run -- index
+uv run scripts/fake_sessions.py summaries /tmp/recherche-demo   # no API key needed
+cargo run -- index
+cargo run -- serve
+```
