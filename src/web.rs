@@ -168,6 +168,12 @@ pub fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
+/// Escapes a path-like string and lets it wrap after each `/`. Copied text
+/// stays the same: `<wbr>` adds no characters.
+pub fn wbr(s: &str) -> String {
+    esc(s).replace('/', "/<wbr>")
+}
+
 // ---- view models ----
 
 pub struct Chip {
@@ -175,6 +181,29 @@ pub struct Chip {
     pub href: String,
     pub class: &'static str,
     pub title: String,
+    /// The matching GitHub page, shown on the session page as an external link.
+    pub github: Option<String>,
+}
+
+/// The GitHub page for a PR, repo or branch entity key. A branch needs the
+/// session's repo key. Other hosts and `path:` repos have no page.
+pub fn github_url(kind: &str, key: &str, repo_key: Option<&str>) -> Option<String> {
+    // `owner/repo`, the form GitHub keys use without their host.
+    let repo = |r: &str| (r.split('/').count() == 2 && !r.split('/').any(str::is_empty)).then(|| r.to_string());
+    match kind {
+        "pr" => {
+            let (r, n) = key.split_once('#')?;
+            let n = n.parse::<u64>().ok()?;
+            Some(format!("https://github.com/{}/pull/{n}", repo(r)?))
+        }
+        "repo" => Some(format!("https://github.com/{}", repo(key.strip_prefix("github.com/")?)?)),
+        "branch" => {
+            let r = repo(repo_key?.strip_prefix("github.com/")?)?;
+            let path: Vec<String> = key.split('/').map(enc).collect();
+            Some(format!("https://github.com/{r}/tree/{}", path.join("/")))
+        }
+        _ => None,
+    }
 }
 
 pub struct ResultView {
@@ -237,11 +266,18 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             href: format!("/e?kind=repo&key={}", enc(k)),
             class: if inferred { "chip repo inferred" } else { "chip repo" },
             title: if inferred { "Repo inferred from the directory".into() } else { "Repo".into() },
+            github: github_url("repo", k, None),
         });
     }
     let branches = cat.entities_of(&s.id, "branch");
     if let Some(b) = branches.iter().find(|b| b.origin == "recorded" && b.key != "main" && b.key != "master").or(branches.first()) {
-        chips.push(Chip { label: b.key.clone(), href: format!("/e?kind=branch&key={}", enc(&b.key)), class: "chip branch", title: "Branch".into() });
+        chips.push(Chip {
+            label: b.key.clone(),
+            href: format!("/e?kind=branch&key={}", enc(&b.key)),
+            class: "chip branch",
+            title: "Branch".into(),
+            github: github_url("branch", &b.key, s.repo_key.as_deref()),
+        });
     }
     let mut prs = cat.entities_of(&s.id, "pr");
     prs.sort_by_key(|e| -e.strength);
@@ -257,10 +293,16 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             Some((r, n)) if !repo.is_empty() && r.to_lowercase() == repo => format!("PR #{n}"),
             _ => p.display.clone(),
         };
-        chips.push(Chip { label, href: format!("/e?kind=pr&key={}", enc(&p.key)), class: "chip pr", title: format!("{verb}: {}", p.display) });
+        chips.push(Chip {
+            label,
+            href: format!("/e?kind=pr&key={}", enc(&p.key)),
+            class: "chip pr",
+            title: format!("{verb}: {}", p.display),
+            github: github_url("pr", &p.key, None),
+        });
     }
     for t in cat.entities_of(&s.id, "ticket").iter().take(3) {
-        chips.push(Chip { label: t.display.clone(), href: format!("/e?kind=ticket&key={}", enc(&t.key.to_lowercase())), class: "chip ticket", title: "Ticket".into() });
+        chips.push(Chip { label: t.display.clone(), href: format!("/e?kind=ticket&key={}", enc(&t.key.to_lowercase())), class: "chip ticket", title: "Ticket".into(), github: None });
     }
     chips
 }
@@ -517,7 +559,7 @@ async fn index(State(e): State<AppState>, Query(p): Query<Params>) -> Result<Htm
         .into_iter()
         .map(|(k, v)| {
             let label = if k == "repo" { crate::extract::repo_display(v) } else { v.to_string() };
-            Chip { label: format!("{k}: {label}"), href: p.url("/", Some((k, v))), class: "chip active", title: "Remove filter".into() }
+            Chip { label: format!("{k}: {label}"), href: p.url("/", Some((k, v))), class: "chip active", title: "Remove filter".into(), github: None }
         })
         .collect();
     let sessions = e.catalog().sessions.len();
@@ -642,7 +684,9 @@ pub struct TurnView {
 
 pub struct EntityGroup {
     pub name: &'static str,
-    pub items: Vec<(String, String, String)>,
+    /// Label, how the session relates to it, its recherche page and its
+    /// GitHub page; either link is empty when there is none.
+    pub items: Vec<(String, String, String, String)>,
 }
 
 #[derive(Template)]
@@ -702,7 +746,7 @@ async fn session_page(State(e): State<AppState>, AxPath(id): AxPath<String>, Que
             }
             turns.push(TurnView { idx: t.idx, when: t.ts.map(fmt_date).unwrap_or_default(), user, assistant, tools, matched, branch: t.branch });
         }
-        let mut groups: BTreeMap<&str, Vec<(String, String, String)>> = BTreeMap::new();
+        let mut groups: BTreeMap<&str, Vec<(String, String, String, String)>> = BTreeMap::new();
         for en in cat.entities.get(&id).into_iter().flatten() {
             let name = match en.kind.as_str() {
                 "pr" => "Pull requests",
@@ -727,7 +771,8 @@ async fn session_page(State(e): State<AppState>, AxPath(id): AxPath<String>, Que
                 "worktree" | "file" | "commit" => String::new(),
                 k => format!("/e?kind={k}&key={}", enc(&en.key.to_lowercase())),
             };
-            groups.entry(name).or_default().push((en.display.clone(), how, href));
+            let github = github_url(&en.kind, &en.key, s.repo_key.as_deref()).unwrap_or_default();
+            groups.entry(name).or_default().push((en.display.clone(), how, href, github));
         }
         let order = ["Pull requests", "Tickets", "Branches", "Commits", "Directories", "Files", "Repos mentioned"];
         let entities = order
@@ -936,6 +981,26 @@ mod tests {
             assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
             assert!(html.contains("Tests passed &amp; staging is pending."));
             assert!(!html.contains("<script>alert(1)</script>"));
+        }
+    }
+
+    #[test]
+    fn github_links_only_for_github_entities() {
+        let repo = Some("github.com/acme/widgets");
+        assert_eq!(github_url("pr", "acme/widgets#42", None).as_deref(), Some("https://github.com/acme/widgets/pull/42"));
+        assert_eq!(github_url("repo", "github.com/acme/widgets", None).as_deref(), Some("https://github.com/acme/widgets"));
+        // Slashes stay path separators; `#` would otherwise start a fragment.
+        assert_eq!(github_url("branch", "feature/Fix#2", repo).as_deref(), Some("https://github.com/acme/widgets/tree/feature/Fix%232"));
+        for (kind, key, repo) in [
+            ("pr", "gitlab.com/acme/widgets#42", None),
+            ("repo", "gitlab.com/acme/widgets", None),
+            ("repo", "path:widgets", None),
+            ("branch", "fix-order", None),
+            ("branch", "fix-order", Some("path:widgets")),
+            ("branch", "fix-order", Some("gitlab.com/acme/widgets")),
+            ("commit", "abc1234", repo),
+        ] {
+            assert_eq!(github_url(kind, key, repo), None, "{kind} {key} {repo:?}");
         }
     }
 
