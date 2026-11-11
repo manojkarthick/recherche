@@ -1,5 +1,5 @@
 //! SQLite: the source of truth for files, sessions, turns, entities, vectors,
-//! LLM spend, the rewrite cache and eval feedback. Search indexes are derived
+//! the rewrite cache and eval feedback. Search indexes are derived
 //! from it and can be rebuilt.
 
 use anyhow::Result;
@@ -103,16 +103,6 @@ CREATE TABLE IF NOT EXISTS cwd_repo (
 CREATE TABLE IF NOT EXISTS vecs (
     hash TEXT PRIMARY KEY,
     v BLOB NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS llm_usage (
-    id INTEGER PRIMARY KEY,
-    ts INTEGER NOT NULL,
-    purpose TEXT NOT NULL,
-    model TEXT NOT NULL,
-    input_tokens INTEGER NOT NULL,
-    output_tokens INTEGER NOT NULL,
-    usd REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS rewrite_cache (
@@ -336,30 +326,6 @@ pub fn set_meta(c: &Connection, key: &str, value: &str) -> Result<()> {
     c.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
         params![key, value],
-    )?;
-    Ok(())
-}
-
-pub fn month_spend(c: &Connection) -> Result<f64> {
-    let start = crate::util::month_start();
-    Ok(c.query_row(
-        "SELECT COALESCE(SUM(usd), 0) FROM llm_usage WHERE ts >= ?",
-        [start],
-        |r| r.get(0),
-    )?)
-}
-
-pub fn record_usage(
-    c: &Connection,
-    purpose: &str,
-    model: &str,
-    input: i64,
-    output: i64,
-    usd: f64,
-) -> Result<()> {
-    c.execute(
-        "INSERT INTO llm_usage (ts, purpose, model, input_tokens, output_tokens, usd) VALUES (?, ?, ?, ?, ?, ?)",
-        params![chrono::Utc::now().timestamp(), purpose, model, input, output, usd],
     )?;
     Ok(())
 }

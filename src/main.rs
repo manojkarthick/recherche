@@ -100,7 +100,7 @@ enum Cmd {
     },
     /// Write a launchd agent (macOS) or systemd user unit (Linux) for `serve`.
     InstallService,
-    /// Show paths, counts, unparsed lines and LLM spend.
+    /// Show paths, counts and unparsed lines.
     Doctor,
 }
 
@@ -232,16 +232,24 @@ fn main() -> Result<()> {
             // Unlike the daemon, the CLI covers sessions from before `serve` first ran.
             let cands = summarize::candidates(&c, &engine.cfg, true, force)?;
             let n = cands.len().min(limit);
-            let est: f64 = cands
-                .iter()
-                .take(limit)
-                .map(|x| engine.llm.estimate(x.digest.len() + 700, 300))
-                .sum();
-            println!(
-                "{n} sessions to summarize, about ${est:.2}. Spent ${:.2} of ${:.2} this month.",
-                store::month_spend(&c)?,
-                engine.cfg.llm.monthly_budget_usd
-            );
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            if n > 0 {
+                match rt.block_on(engine.llm.prices()) {
+                    Ok(p) => {
+                        let est: f64 = cands
+                            .iter()
+                            .take(limit)
+                            .map(|x| llm::summary_estimate(&p, x.digest.len()))
+                            .sum();
+                        println!("{n} sessions to summarize, about ${est:.2}.");
+                    }
+                    Err(e) => println!("{n} sessions to summarize (no estimate: {e:#})."),
+                }
+            } else {
+                println!("0 sessions to summarize.");
+            }
             if dry_run || n == 0 {
                 return Ok(());
             }
@@ -251,9 +259,6 @@ fn main() -> Result<()> {
                     engine.cfg.llm.api_key_env
                 );
             }
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
             let done = rt.block_on(summarize::run(
                 &engine.llm,
                 &engine.cfg,
@@ -264,10 +269,7 @@ fn main() -> Result<()> {
                 true,
             ))?;
             engine.refresh(false)?;
-            println!(
-                "Summarized {done} sessions. Spent ${:.2} this month.",
-                store::month_spend(&c)?
-            );
+            println!("Summarized {done} sessions.");
         }
         Cmd::Eval {
             file,
@@ -453,12 +455,10 @@ fn doctor(cfg: config::Config) -> Result<()> {
     );
     let key = std::env::var(&engine.cfg.llm.api_key_env).is_ok();
     println!(
-        "llm          {} ({} {}), ${:.2} of ${:.2} spent this month",
+        "llm          {} ({} {})",
         if engine.llm.available() { "on" } else { "off" },
         engine.cfg.llm.api_key_env,
         if key { "set" } else { "not set" },
-        store::month_spend(&c)?,
-        engine.cfg.llm.monthly_budget_usd
     );
     Ok(())
 }

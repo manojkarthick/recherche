@@ -27,7 +27,7 @@ Other commands:
 | `recherche summarize [--redo [N]] [--dry-run]` | Summarizes sessions that need it; `--redo` regenerates existing summaries; `--dry-run` shows the count and estimated cost |
 | `recherche eval [-v] [--rewrite]` | Scores ranking configurations against your eval queries |
 | `recherche install-service` | Writes a launchd agent (macOS) or systemd user unit (Linux) for `serve` |
-| `recherche doctor` | Paths, counts, unparsed lines and LLM spend |
+| `recherche doctor` | Paths, counts and unparsed lines |
 
 ## LLM features (optional)
 
@@ -36,11 +36,11 @@ With `OPENROUTER_API_KEY` set, two features call a model through [OpenRouter](ht
 - **Query rewrite**: for sentence-like queries whose top results score weakly, the query is expanded into terms the transcript may have used ("history tables" becomes "audit table, SCD2, temporal table"). The refined results stream in after the first ones; the reranker still scores against your own words.
 - **Session summaries**: a title, a short summary, a kind and an outcome for each finished session, written from a capped digest of the session rather than the whole transcript. While `serve` runs, sessions that started after it first ran are summarized once they go idle. Run `recherche summarize` once for the backlog: it summarizes every finished session that has no summary yet or has grown by half since its last one, however old.
 
-To regenerate summaries that already exist, run `recherche summarize --redo 5` for the 5 most recently ended sessions, or `recherche summarize --redo` for all of them. Add `--dry-run` to any of these to see the count and estimated cost first. Sessions still in progress, excluded sources and paths, and the monthly budget are respected either way. Stop the running `serve` process or service before running the summarization command so it can update the search index.
+To regenerate summaries that already exist, run `recherche summarize --redo 5` for the 5 most recently ended sessions, or `recherche summarize --redo` for all of them. Add `--dry-run` to any of these to see the count and estimated cost first. Sessions still in progress and excluded sources and paths are respected either way. Stop the running `serve` process or service before running the summarization command so it can update the search index.
 
 Any OpenRouter model works: set `llm.model`, and `llm.rewrite_model` to use a different (faster) model for rewrite. Any other OpenAI-compatible API works too through `llm.base_url`.
 
-Spend is recorded from the cost OpenRouter reports for each call and capped at `llm.monthly_budget_usd` (default $5). At the cap, LLM features stop for the month and search keeps working. Requests ask OpenRouter to use only hosts that don't store or train on prompts (`llm.deny_data_collection`). Both Claude Code and Codex sessions are summarized by default; use `llm.summarize_sources` to limit this to one agent, and `llm.summarize_exclude_paths` to keep directories such as work repos out.
+recherche doesn't track or cap spend; set a credit limit on your OpenRouter API key instead. If the API rejects a call, LLM features fail and search keeps working. Requests ask OpenRouter to use only hosts that don't store or train on prompts (`llm.deny_data_collection`). Both Claude Code and Codex sessions are summarized by default; use `llm.summarize_sources` to limit this to one agent, and `llm.summarize_exclude_paths` to keep directories such as work repos out.
 
 Search itself never calls an API: the embedder and reranker run locally.
 
