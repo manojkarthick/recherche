@@ -16,9 +16,10 @@ pub struct Candidate {
     pub digest: String,
 }
 
-/// Sessions due for a summary. Without `backfill`, only sessions that
-/// started after the daemon first ran are picked; older ones wait for an
-/// explicit `recherche summarize --all`. `force` bypasses only the growth check.
+/// Sessions due for a summary, most recently ended first. Without `backfill`
+/// (the daemon), only sessions that started after the daemon first ran are
+/// picked; older ones wait for an explicit `recherche summarize`. `force`
+/// bypasses only the growth check.
 pub fn candidates(c: &Connection, cfg: &Config, backfill: bool, force: bool) -> Result<Vec<Candidate>> {
     let cutoff: i64 = if backfill { 0 } else { store::get_meta(c, "auto_summary_since")?.and_then(|v| v.parse().ok()).unwrap_or(i64::MAX) };
     let idle_before = chrono::Utc::now().timestamp() - cfg.llm.idle_minutes * 60;
