@@ -6,7 +6,7 @@ use crate::llm::Llm;
 use crate::model::clip_chars;
 use crate::store;
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 const DIGEST_CHARS: usize = 22_000;
 
@@ -20,26 +20,50 @@ pub struct Candidate {
 /// (the daemon), only sessions that started after the daemon first ran are
 /// picked; older ones wait for an explicit `recherche summarize`. `force`
 /// bypasses only the growth check.
-pub fn candidates(c: &Connection, cfg: &Config, backfill: bool, force: bool) -> Result<Vec<Candidate>> {
-    let cutoff: i64 = if backfill { 0 } else { store::get_meta(c, "auto_summary_since")?.and_then(|v| v.parse().ok()).unwrap_or(i64::MAX) };
+pub fn candidates(
+    c: &Connection,
+    cfg: &Config,
+    backfill: bool,
+    force: bool,
+) -> Result<Vec<Candidate>> {
+    let cutoff: i64 = if backfill {
+        0
+    } else {
+        store::get_meta(c, "auto_summary_since")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(i64::MAX)
+    };
     let idle_before = chrono::Utc::now().timestamp() - cfg.llm.idle_minutes * 60;
     let mut st = c.prepare(
         "SELECT id, source, COALESCE(cwd, ''), turn_count, summary_turns FROM sessions
          WHERE skip = 0 AND turn_count > 0 AND parent_id IS NULL AND ended < ? AND started >= ?
          ORDER BY ended DESC",
     )?;
-    let rows: Vec<(String, String, String, i64, Option<i64>)> =
-        st.query_map(params![idle_before, cutoff], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?.collect::<Result<_, _>>()?;
+    let rows: Vec<(String, String, String, i64, Option<i64>)> = st
+        .query_map(params![idle_before, cutoff], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
+        .collect::<Result<_, _>>()?;
     let mut out = vec![];
     for (id, source, cwd, turns, done) in rows {
-        if !cfg.llm.summarize_sources.contains(&source) || cfg.llm.summarize_exclude_paths.iter().any(|p| !p.is_empty() && cwd.contains(p.as_str())) {
+        if !cfg.llm.summarize_sources.contains(&source)
+            || cfg
+                .llm
+                .summarize_exclude_paths
+                .iter()
+                .any(|p| !p.is_empty() && cwd.contains(p.as_str()))
+        {
             continue;
         }
         // Re-summarize only once a session has grown by half since its summary.
         if !force && done.is_some_and(|d| turns < d + d / 2 + 2) {
             continue;
         }
-        out.push(Candidate { digest: digest(c, &id)?, id, turns });
+        out.push(Candidate {
+            digest: digest(c, &id)?,
+            id,
+            turns,
+        });
     }
     Ok(out)
 }
@@ -47,16 +71,23 @@ pub fn candidates(c: &Connection, cfg: &Config, backfill: bool, force: bool) -> 
 /// What the summary is written from: prompts, commits, PRs, files, errors
 /// and the final reply. Most of a session's signal is in these.
 pub fn digest(c: &Connection, id: &str) -> Result<String> {
-    let (title, repo, cwd, source): (Option<String>, Option<String>, Option<String>, String) =
-        c.query_row("SELECT title, repo_key, cwd, source FROM sessions WHERE id = ?", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+    let (title, repo, cwd, source): (Option<String>, Option<String>, Option<String>, String) = c
+        .query_row(
+            "SELECT title, repo_key, cwd, source FROM sessions WHERE id = ?",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
     let mut out = format!(
         "Agent: {source}\nTitle: {}\nRepo: {}\nDirectory: {}\n",
         title.unwrap_or_default(),
-        repo.map(|r| crate::extract::repo_display(&r)).unwrap_or_default(),
+        repo.map(|r| crate::extract::repo_display(&r))
+            .unwrap_or_default(),
         cwd.unwrap_or_default()
     );
     let mut st = c.prepare("SELECT kind, display FROM entities WHERE session_id = ? AND kind IN ('pr', 'branch', 'ticket', 'commit') ORDER BY kind")?;
-    for row in st.query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+    for row in st.query_map([id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })? {
         let (k, d) = row?;
         out.push_str(&format!("{k}: {d}\n"));
     }
@@ -71,14 +102,35 @@ pub fn digest(c: &Connection, id: &str) -> Result<String> {
         .prepare("SELECT COALESCE(clean_user, user_text), assistant_text, errors FROM turns WHERE session_id = ? AND dup = 0 ORDER BY idx")?
         .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<Result<_, _>>()?;
-    let errors: Vec<&str> = rows.iter().flat_map(|r| r.2.lines()).filter(|l| !l.trim().is_empty()).take(10).collect();
+    let errors: Vec<&str> = rows
+        .iter()
+        .flat_map(|r| r.2.lines())
+        .filter(|l| !l.trim().is_empty())
+        .take(10)
+        .collect();
     if !errors.is_empty() {
-        out.push_str(&format!("Errors seen:\n{}\n", errors.iter().map(|e| clip_chars(e, 200)).collect::<Vec<_>>().join("\n")));
+        out.push_str(&format!(
+            "Errors seen:\n{}\n",
+            errors
+                .iter()
+                .map(|e| clip_chars(e, 200))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
     }
-    let last = rows.iter().rev().find(|r| !r.1.is_empty()).map(|r| clip_chars(&r.1, 1500)).unwrap_or_default();
+    let last = rows
+        .iter()
+        .rev()
+        .find(|r| !r.1.is_empty())
+        .map(|r| clip_chars(&r.1, 1500))
+        .unwrap_or_default();
     out.push_str("\nUser prompts, in order:\n");
     let budget = DIGEST_CHARS.saturating_sub(out.len() + last.len() + 100);
-    let prompts: Vec<&String> = rows.iter().map(|r| &r.0).filter(|u| !u.is_empty()).collect();
+    let prompts: Vec<&String> = rows
+        .iter()
+        .map(|r| &r.0)
+        .filter(|u| !u.is_empty())
+        .collect();
     let per = (budget / prompts.len().max(1)).clamp(120, 600);
     let mut used = 0;
     for p in &prompts {
@@ -97,7 +149,15 @@ pub fn digest(c: &Connection, id: &str) -> Result<String> {
 /// Summarizes up to `limit` candidates. Stops at the budget or on the first
 /// API failure, because the next call would most likely fail the same way.
 /// With `progress`, prints one line per session to stderr (for the CLI).
-pub async fn run(llm: &Llm, cfg: &Config, db: &std::path::Path, backfill: bool, force: bool, limit: usize, progress: bool) -> Result<usize> {
+pub async fn run(
+    llm: &Llm,
+    cfg: &Config,
+    db: &std::path::Path,
+    backfill: bool,
+    force: bool,
+    limit: usize,
+    progress: bool,
+) -> Result<usize> {
     if !llm.summaries_enabled() {
         return Ok(0);
     }
@@ -128,7 +188,11 @@ pub async fn run(llm: &Llm, cfg: &Config, db: &std::path::Path, backfill: bool, 
                 n += 1;
             }
             Err(e) => {
-                tracing::warn!("[{}/{total}] summary for {} failed, stopping: {e:#}", i + 1, cand.id);
+                tracing::warn!(
+                    "[{}/{total}] summary for {} failed, stopping: {e:#}",
+                    i + 1,
+                    cand.id
+                );
                 break;
             }
         }
@@ -148,7 +212,18 @@ mod tests {
         let mut cfg = Config::default();
         cfg.llm.summarize_sources = vec!["claude".into()];
         cfg.llm.summarize_exclude_paths = vec!["/excluded".into()];
-        for id in ["unchanged", "grown", "new", "active", "excluded", "source", "child", "skipped", "empty", "older"] {
+        for id in [
+            "unchanged",
+            "grown",
+            "new",
+            "active",
+            "excluded",
+            "source",
+            "child",
+            "skipped",
+            "empty",
+            "older",
+        ] {
             c.execute(
                 "INSERT INTO sessions (id, source, host, cwd, started, ended, turn_count, summary_turns, summary, archive_path)
                  VALUES (?, 'claude', 'test', '/project', ?, ?, 10, 10, 'Existing summary', '')",
@@ -165,9 +240,15 @@ mod tests {
              UPDATE sessions SET turn_count = 0 WHERE id = 'empty';",
         )?;
         c.execute("UPDATE sessions SET ended = ? WHERE id = 'active'", [now])?;
-        c.execute("UPDATE sessions SET started = ? WHERE id = 'older'", [now - 14_400])?;
+        c.execute(
+            "UPDATE sessions SET started = ? WHERE id = 'older'",
+            [now - 14_400],
+        )?;
         let ids = |backfill, force| -> Result<Vec<String>> {
-            let mut ids: Vec<_> = candidates(&c, &cfg, backfill, force)?.into_iter().map(|s| s.id).collect();
+            let mut ids: Vec<_> = candidates(&c, &cfg, backfill, force)?
+                .into_iter()
+                .map(|s| s.id)
+                .collect();
             ids.sort();
             Ok(ids)
         };
@@ -175,7 +256,11 @@ mod tests {
         assert_eq!(ids(true, false)?, ["grown", "new"]);
         assert_eq!(ids(false, true)?, ["grown", "new", "unchanged"]);
         assert_eq!(ids(true, true)?, ["grown", "new", "older", "unchanged"]);
-        let stored: (String, i64) = c.query_row("SELECT summary, summary_turns FROM sessions WHERE id = 'unchanged'", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let stored: (String, i64) = c.query_row(
+            "SELECT summary, summary_turns FROM sessions WHERE id = 'unchanged'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
         assert_eq!(stored, ("Existing summary".into(), 10));
         Ok(())
     }

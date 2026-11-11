@@ -5,9 +5,9 @@
 
 use crate::config;
 use crate::store;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -45,16 +45,35 @@ pub struct Summary {
     pub tags: Vec<String>,
 }
 
-pub const KINDS: &[&str] = &["bugfix", "feature", "design", "migration", "review", "research", "ops", "refactor", "docs"];
+pub const KINDS: &[&str] = &[
+    "bugfix",
+    "feature",
+    "design",
+    "migration",
+    "review",
+    "research",
+    "ops",
+    "refactor",
+    "docs",
+];
 pub const OUTCOMES: &[&str] = &["fixed", "shipped", "investigated", "planned", "abandoned"];
 
 impl Llm {
     pub fn new(cfg: config::Llm, db: PathBuf) -> Self {
-        Self { cfg, db, http: reqwest::Client::builder().timeout(Duration::from_secs(60)).build().unwrap() }
+        Self {
+            cfg,
+            db,
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .unwrap(),
+        }
     }
 
     fn key(&self) -> Option<String> {
-        std::env::var(&self.cfg.api_key_env).ok().filter(|k| !k.is_empty())
+        std::env::var(&self.cfg.api_key_env)
+            .ok()
+            .filter(|k| !k.is_empty())
     }
 
     pub fn available(&self) -> bool {
@@ -70,26 +89,42 @@ impl Llm {
     }
 
     fn cost(&self, input: i64, output: i64) -> f64 {
-        input as f64 / 1e6 * self.cfg.price_input_per_mtok + output as f64 / 1e6 * self.cfg.price_output_per_mtok
+        input as f64 / 1e6 * self.cfg.price_input_per_mtok
+            + output as f64 / 1e6 * self.cfg.price_output_per_mtok
     }
 
     pub fn spent(&self) -> f64 {
-        store::open(&self.db).and_then(|c| store::month_spend(&c)).unwrap_or(0.0)
+        store::open(&self.db)
+            .and_then(|c| store::month_spend(&c))
+            .unwrap_or(0.0)
     }
 
     pub fn estimate(&self, input_chars: usize, max_tokens: i64) -> f64 {
         self.cost((input_chars / 3) as i64 + 50, max_tokens)
     }
 
-    async fn complete(&self, purpose: &str, model: &str, system: &str, user: &str, max_tokens: i64, timeout: Duration) -> Result<String> {
+    async fn complete(
+        &self,
+        purpose: &str,
+        model: &str,
+        system: &str,
+        user: &str,
+        max_tokens: i64,
+        timeout: Duration,
+    ) -> Result<String> {
         if !self.cfg.enabled {
             bail!("LLM features are disabled");
         }
-        let key = self.key().ok_or_else(|| anyhow!("{} is not set", self.cfg.api_key_env))?;
+        let key = self
+            .key()
+            .ok_or_else(|| anyhow!("{} is not set", self.cfg.api_key_env))?;
         let worst = self.estimate(system.len() + user.len(), max_tokens);
         let spent = self.spent();
         if spent + worst > self.cfg.monthly_budget_usd {
-            bail!("monthly LLM budget reached (${spent:.2} of ${:.2})", self.cfg.monthly_budget_usd);
+            bail!(
+                "monthly LLM budget reached (${spent:.2} of ${:.2})",
+                self.cfg.monthly_budget_usd
+            );
         }
         let mut body = json!({
             "model": model,
@@ -108,7 +143,10 @@ impl Llm {
         }
         let resp = self
             .http
-            .post(format!("{}/chat/completions", self.cfg.base_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/chat/completions",
+                self.cfg.base_url.trim_end_matches('/')
+            ))
             .timeout(timeout)
             .bearer_auth(key)
             .header("X-Title", "recherche")
@@ -118,19 +156,29 @@ impl Llm {
         let status = resp.status();
         let v: Value = resp.json().await?;
         if !status.is_success() || v["error"].is_object() {
-            bail!("LLM API {status}: {}", v["error"]["message"].as_str().unwrap_or(""));
+            bail!(
+                "LLM API {status}: {}",
+                v["error"]["message"].as_str().unwrap_or("")
+            );
         }
         let input = v["usage"]["prompt_tokens"].as_i64().unwrap_or(0);
         let output = v["usage"]["completion_tokens"].as_i64().unwrap_or(0);
         // Prefer the cost the API reports; fall back to the configured prices.
-        let usd = v["usage"]["cost"].as_f64().unwrap_or_else(|| self.cost(input, output));
+        let usd = v["usage"]["cost"]
+            .as_f64()
+            .unwrap_or_else(|| self.cost(input, output));
         let db = store::open(&self.db)?;
         store::record_usage(&db, purpose, model, input, output, usd)?;
-        let text = v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+        let text = v["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         if json_object(&text).is_none() {
             bail!(
                 "{model} replied without JSON (finish reason {}, {output} output tokens): {}",
-                v["choices"][0]["finish_reason"].as_str().unwrap_or("unknown"),
+                v["choices"][0]["finish_reason"]
+                    .as_str()
+                    .unwrap_or("unknown"),
                 crate::model::clip_chars(&text, 200)
             );
         }
@@ -141,7 +189,9 @@ impl Llm {
     pub async fn rewrite(&self, query: &str, repos: &[String]) -> Result<Rewrite> {
         let norm = query.trim().to_lowercase();
         let db = store::open(&self.db)?;
-        if let Ok(j) = db.query_row("SELECT json FROM rewrite_cache WHERE q = ?", [&norm], |r| r.get::<_, String>(0)) {
+        if let Ok(j) = db.query_row("SELECT json FROM rewrite_cache WHERE q = ?", [&norm], |r| {
+            r.get::<_, String>(0)
+        }) {
             return Ok(serde_json::from_str(&j)?);
         }
         drop(db);
@@ -156,13 +206,32 @@ impl Llm {
             chrono::Local::now().format("%Y-%m-%d")
         );
         let user = format!("Known repos: {}\nQuery: {query}", repos.join(", "));
-        let model = if self.cfg.rewrite_model.is_empty() { &self.cfg.model } else { &self.cfg.rewrite_model };
-        let text = self.complete("rewrite", model, &system, &user, 200, Duration::from_secs(4)).await?;
-        let rw: Rewrite = serde_json::from_str(json_object(&text).ok_or_else(|| anyhow!("rewrite reply had no JSON"))?)?;
+        let model = if self.cfg.rewrite_model.is_empty() {
+            &self.cfg.model
+        } else {
+            &self.cfg.rewrite_model
+        };
+        let text = self
+            .complete(
+                "rewrite",
+                model,
+                &system,
+                &user,
+                200,
+                Duration::from_secs(4),
+            )
+            .await?;
+        let rw: Rewrite = serde_json::from_str(
+            json_object(&text).ok_or_else(|| anyhow!("rewrite reply had no JSON"))?,
+        )?;
         let db = store::open(&self.db)?;
         db.execute(
             "INSERT OR REPLACE INTO rewrite_cache (q, json, ts) VALUES (?, ?, ?)",
-            rusqlite::params![norm, serde_json::to_string(&rw)?, chrono::Utc::now().timestamp()],
+            rusqlite::params![
+                norm,
+                serde_json::to_string(&rw)?,
+                chrono::Utc::now().timestamp()
+            ],
         )?;
         Ok(rw)
     }
@@ -176,8 +245,19 @@ impl Llm {
              use no headings or labels, mention unfinished work only when important, and name relevant repos, PRs, tickets, tools and error messages, \
              \"kind\": one of {KINDS:?}, \"outcome\": one of {OUTCOMES:?}, \"tags\": up to 5 short lowercase topic tags}}."
         );
-        let text = self.complete("summary", &self.cfg.model, &system, digest, 400, Duration::from_secs(60)).await?;
-        let mut s: Summary = serde_json::from_str(json_object(&text).ok_or_else(|| anyhow!("summary reply had no JSON"))?)?;
+        let text = self
+            .complete(
+                "summary",
+                &self.cfg.model,
+                &system,
+                digest,
+                400,
+                Duration::from_secs(60),
+            )
+            .await?;
+        let mut s: Summary = serde_json::from_str(
+            json_object(&text).ok_or_else(|| anyhow!("summary reply had no JSON"))?,
+        )?;
         s.kind = s.kind.filter(|k| KINDS.contains(&k.as_str()));
         s.outcome = s.outcome.filter(|o| OUTCOMES.contains(&o.as_str()));
         s.tags.truncate(5);

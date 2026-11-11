@@ -5,8 +5,8 @@
 
 use crate::search::Engine;
 use notify::{RecursiveMode, Watcher};
-use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::sync::Arc;
+use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
 const SUMMARY_EVERY: Duration = Duration::from_secs(300);
@@ -18,24 +18,39 @@ pub fn run(e: Arc<Engine>) {
     let (tx, rx) = channel::<()>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res
-            && ev.paths.iter().any(|p| p.extension().is_some_and(|x| x == "jsonl")) {
-                let _ = tx.send(());
-            }
+            && ev
+                .paths
+                .iter()
+                .any(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        {
+            let _ = tx.send(());
+        }
     })
     .map_err(|err| tracing::warn!("file watcher unavailable, polling only: {err}"))
     .ok();
     if let Some(w) = watcher.as_mut() {
-        for dir in [e.cfg.claude_dir().join("projects"), e.cfg.codex_dir().join("sessions")] {
+        for dir in [
+            e.cfg.claude_dir().join("projects"),
+            e.cfg.codex_dir().join("sessions"),
+        ] {
             if dir.exists()
-                && let Err(err) = w.watch(&dir, RecursiveMode::Recursive) {
-                    tracing::warn!("cannot watch {}: {err}", dir.display());
-                }
+                && let Err(err) = w.watch(&dir, RecursiveMode::Recursive)
+            {
+                tracing::warn!("cannot watch {}: {err}", dir.display());
+            }
         }
     }
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
     let poll = Duration::from_secs(e.cfg.sources.poll_seconds.max(5));
-    let mut last_summary = Instant::now().checked_sub(SUMMARY_EVERY).unwrap_or_else(Instant::now);
-    let mut last_embed = Instant::now().checked_sub(EMBED_EVERY).unwrap_or_else(Instant::now);
+    let mut last_summary = Instant::now()
+        .checked_sub(SUMMARY_EVERY)
+        .unwrap_or_else(Instant::now);
+    let mut last_embed = Instant::now()
+        .checked_sub(EMBED_EVERY)
+        .unwrap_or_else(Instant::now);
     loop {
         let embed = last_embed.elapsed() >= EMBED_EVERY;
         if embed {
@@ -49,7 +64,9 @@ pub fn run(e: Arc<Engine>) {
         e.models.unload_idle();
         if last_summary.elapsed() >= SUMMARY_EVERY && e.llm.summaries_enabled() {
             last_summary = Instant::now();
-            match rt.block_on(crate::summarize::run(&e.llm, &e.cfg, &e.db, false, false, 20, false)) {
+            match rt.block_on(crate::summarize::run(
+                &e.llm, &e.cfg, &e.db, false, false, 20, false,
+            )) {
                 Ok(0) => {}
                 Ok(n) => {
                     tracing::info!("summarized {n} sessions");

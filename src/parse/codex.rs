@@ -5,12 +5,15 @@
 //! have `user_message`/`agent_message` events and `function_call` items; those
 //! are read as a fallback.
 
-use crate::model::{clip_chars, clip_output, parse_ts, Fact, ParsedSession, ToolCall, Turn};
+use crate::model::{Fact, ParsedSession, ToolCall, Turn, clip_chars, clip_output, parse_ts};
 use serde_json::Value;
 use std::path::Path;
 
 pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
-    let mut s = ParsedSession { source: "codex", ..Default::default() };
+    let mut s = ParsedSession {
+        source: "codex",
+        ..Default::default()
+    };
     let mut branch: Option<String> = None;
     let mut cwd: Option<String> = None;
     let mut have_items = false;
@@ -32,25 +35,39 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
         let p = &v["payload"];
         match v["type"].as_str().unwrap_or("") {
             "session_meta" => {
-                s.id = p["id"].as_str().or(p["session_id"].as_str()).unwrap_or("").to_string();
+                s.id = p["id"]
+                    .as_str()
+                    .or(p["session_id"].as_str())
+                    .unwrap_or("")
+                    .to_string();
                 s.cwd = p["cwd"].as_str().map(String::from);
                 cwd = s.cwd.clone();
                 let src = p["source"].to_string();
-                if src.contains("guardian") || p["thread_source"].as_str() == Some("guardian_review") {
+                if src.contains("guardian")
+                    || p["thread_source"].as_str() == Some("guardian_review")
+                {
                     s.skip = true;
                 }
                 s.parent_id = find_key(&p["source"], "parent_thread_id");
                 let g = &p["git"];
                 if let Some(url) = g["repository_url"].as_str()
-                    && let Some(key) = crate::extract::normalize_remote(url) {
-                        s.facts.push(Fact::new("repo", key.clone(), crate::extract::repo_display(&key), "recorded", 5));
-                    }
+                    && let Some(key) = crate::extract::normalize_remote(url)
+                {
+                    s.facts.push(Fact::new(
+                        "repo",
+                        key.clone(),
+                        crate::extract::repo_display(&key),
+                        "recorded",
+                        5,
+                    ));
+                }
                 if let Some(b) = g["branch"].as_str() {
                     branch = Some(b.to_string());
                     s.facts.push(Fact::new("branch", b, b, "recorded", 1));
                 }
                 if let Some(c) = g["commit_hash"].as_str() {
-                    s.facts.push(Fact::new("commit", c, &c[..c.len().min(10)], "recorded", 1));
+                    s.facts
+                        .push(Fact::new("commit", c, &c[..c.len().min(10)], "recorded", 1));
                 }
             }
             "turn_context" => {
@@ -75,14 +92,21 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
         }
     }
     if s.id.is_empty() {
-        s.id = path.file_stem().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+        s.id = path
+            .file_stem()
+            .map(|x| x.to_string_lossy().into_owned())
+            .unwrap_or_default();
     }
     s
 }
 
 fn find_key(v: &Value, key: &str) -> Option<String> {
     match v {
-        Value::Object(m) => m.get(key).and_then(|x| x.as_str()).map(String::from).or_else(|| m.values().find_map(|x| find_key(x, key))),
+        Value::Object(m) => m
+            .get(key)
+            .and_then(|x| x.as_str())
+            .map(String::from)
+            .or_else(|| m.values().find_map(|x| find_key(x, key))),
         _ => None,
     }
 }
@@ -90,23 +114,50 @@ fn find_key(v: &Value, key: &str) -> Option<String> {
 fn texts(content: &Value) -> String {
     match content {
         Value::String(t) => t.clone(),
-        Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|p| p["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => String::new(),
     }
 }
 
-fn new_turn(s: &mut ParsedSession, ts: Option<chrono::DateTime<chrono::Utc>>, user: String, branch: &Option<String>, cwd: &Option<String>) {
-    s.turns.push(Turn { ts, user, branch: branch.clone(), cwd: cwd.clone(), ..Default::default() });
+fn new_turn(
+    s: &mut ParsedSession,
+    ts: Option<chrono::DateTime<chrono::Utc>>,
+    user: String,
+    branch: &Option<String>,
+    cwd: &Option<String>,
+) {
+    s.turns.push(Turn {
+        ts,
+        user,
+        branch: branch.clone(),
+        cwd: cwd.clone(),
+        ..Default::default()
+    });
 }
 
-fn current<'a>(s: &'a mut ParsedSession, ts: Option<chrono::DateTime<chrono::Utc>>, branch: &Option<String>, cwd: &Option<String>) -> &'a mut Turn {
+fn current<'a>(
+    s: &'a mut ParsedSession,
+    ts: Option<chrono::DateTime<chrono::Utc>>,
+    branch: &Option<String>,
+    cwd: &Option<String>,
+) -> &'a mut Turn {
     if s.turns.is_empty() {
         new_turn(s, ts, String::new(), branch, cwd);
     }
     s.turns.last_mut().unwrap()
 }
 
-fn item(s: &mut ParsedSession, it: &Value, ts: Option<chrono::DateTime<chrono::Utc>>, branch: &Option<String>, cwd: &Option<String>) {
+fn item(
+    s: &mut ParsedSession,
+    it: &Value,
+    ts: Option<chrono::DateTime<chrono::Utc>>,
+    branch: &Option<String>,
+    cwd: &Option<String>,
+) {
     match it["type"].as_str().unwrap_or("") {
         "UserMessage" => {
             let t = texts(&it["content"]).trim().to_string();
@@ -145,7 +196,10 @@ fn item(s: &mut ParsedSession, it: &Value, ts: Option<chrono::DateTime<chrono::U
             });
         }
         "FileChange" => {
-            let files: Vec<String> = it["changes"].as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+            let files: Vec<String> = it["changes"]
+                .as_object()
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
             current(s, ts, branch, cwd).tools.push(ToolCall {
                 name: "apply_patch".into(),
                 input: files.join(" "),
@@ -154,7 +208,11 @@ fn item(s: &mut ParsedSession, it: &Value, ts: Option<chrono::DateTime<chrono::U
             });
         }
         "McpToolCall" => {
-            let name = format!("{}.{}", it["server"].as_str().unwrap_or("mcp"), it["tool"].as_str().unwrap_or(""));
+            let name = format!(
+                "{}.{}",
+                it["server"].as_str().unwrap_or("mcp"),
+                it["tool"].as_str().unwrap_or("")
+            );
             let result = texts(&it["result"]["content"]);
             current(s, ts, branch, cwd).tools.push(ToolCall {
                 name,
@@ -165,14 +223,26 @@ fn item(s: &mut ParsedSession, it: &Value, ts: Option<chrono::DateTime<chrono::U
         }
         "SubAgentActivity" if it["kind"].as_str() == Some("started") => {
             if let Some(child) = it["agent_thread_id"].as_str() {
-                s.facts.push(Fact::new("child", child, it["agent_path"].as_str().unwrap_or(child), "recorded", 1));
+                s.facts.push(Fact::new(
+                    "child",
+                    child,
+                    it["agent_path"].as_str().unwrap_or(child),
+                    "recorded",
+                    1,
+                ));
             }
         }
         _ => {}
     }
 }
 
-fn legacy_item(s: &mut ParsedSession, p: &Value, ts: Option<chrono::DateTime<chrono::Utc>>, branch: &Option<String>, cwd: &Option<String>) {
+fn legacy_item(
+    s: &mut ParsedSession,
+    p: &Value,
+    ts: Option<chrono::DateTime<chrono::Utc>>,
+    branch: &Option<String>,
+    cwd: &Option<String>,
+) {
     match p["type"].as_str().unwrap_or("") {
         "user_message" => {
             let t = p["message"].as_str().unwrap_or("").trim().to_string();
@@ -189,7 +259,8 @@ fn legacy_item(s: &mut ParsedSession, p: &Value, ts: Option<chrono::DateTime<chr
             }
         }
         "function_call" => {
-            let args: Value = serde_json::from_str(p["arguments"].as_str().unwrap_or("{}")).unwrap_or_default();
+            let args: Value =
+                serde_json::from_str(p["arguments"].as_str().unwrap_or("{}")).unwrap_or_default();
             let input = match &args["command"] {
                 Value::Array(a) => a.last().and_then(|x| x.as_str()).unwrap_or("").to_string(),
                 Value::String(c) => c.clone(),
@@ -208,7 +279,11 @@ fn legacy_item(s: &mut ParsedSession, p: &Value, ts: Option<chrono::DateTime<chr
                 Value::String(o) => o.clone(),
                 other => texts(other),
             };
-            if let Some(tc) = s.turns.last_mut().and_then(|t| t.tools.iter_mut().find(|t| t.id == id)) {
+            if let Some(tc) = s
+                .turns
+                .last_mut()
+                .and_then(|t| t.tools.iter_mut().find(|t| t.id == id))
+            {
                 tc.output = clip_output(&out, 20, 20);
             }
         }

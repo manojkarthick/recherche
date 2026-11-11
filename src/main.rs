@@ -15,13 +15,17 @@ mod summarize;
 mod util;
 mod web;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "recherche", version, about = "Search your past Claude Code and Codex sessions")]
+#[command(
+    name = "recherche",
+    version,
+    about = "Search your past Claude Code and Codex sessions"
+)]
 struct Cli {
     /// Config file. Default: $XDG_CONFIG_HOME/recherche/config.toml
     #[arg(long, global = true)]
@@ -102,7 +106,10 @@ enum Cmd {
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("RECHERCHE_LOG").unwrap_or_else(|_| "recherche=info".into()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("RECHERCHE_LOG")
+                .unwrap_or_else(|_| "recherche=info".into()),
+        )
         .with_writer(std::io::stderr)
         .init();
     let cli = Cli::parse();
@@ -121,7 +128,18 @@ fn main() -> Result<()> {
                 t.elapsed().as_secs_f32()
             );
         }
-        Cmd::Search { query, repo, agent, since, limit, json, no_vectors, no_rerank, rewrite, no_index } => {
+        Cmd::Search {
+            query,
+            repo,
+            agent,
+            since,
+            limit,
+            json,
+            no_vectors,
+            no_rerank,
+            rewrite,
+            no_index,
+        } => {
             let engine = search::Engine::open(cfg)?;
             if !no_index {
                 // With the daemon running, it holds the index writer and the index is current.
@@ -136,10 +154,15 @@ fn main() -> Result<()> {
                 }
             }
             let pq = engine.parse(&q);
-            let opts = search::Options { vectors: !no_vectors && engine.cfg.search.vectors, rerank: !no_rerank && engine.cfg.search.rerank };
+            let opts = search::Options {
+                vectors: !no_vectors && engine.cfg.search.vectors,
+                rerank: !no_rerank && engine.cfg.search.rerank,
+            };
             let mut res = engine.run(&pq, opts, None, "hybrid")?;
             if rewrite && engine.wants_rewrite(&pq, &res) {
-                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
                 match rt.block_on(engine.rewrite(&pq)) {
                     Ok(rw) => res = engine.run(&pq, opts, Some(&rw), "refined")?,
                     Err(e) => eprintln!("rewrite skipped: {e:#}"),
@@ -153,25 +176,48 @@ fn main() -> Result<()> {
                 cfg.listen = l;
             }
             if !cfg.is_loopback() && cfg.token.is_none() {
-                bail!("listening on {} is reachable from other machines; set `token` in the config first", cfg.listen);
+                bail!(
+                    "listening on {} is reachable from other machines; set `token` in the config first",
+                    cfg.listen
+                );
             }
             let listen = cfg.listen.clone();
             let engine = Arc::new(search::Engine::open(cfg)?);
             {
                 let c = engine.conn()?;
                 if store::get_meta(&c, "auto_summary_since")?.is_none() {
-                    store::set_meta(&c, "auto_summary_since", &chrono::Utc::now().timestamp().to_string())?;
+                    store::set_meta(
+                        &c,
+                        "auto_summary_since",
+                        &chrono::Utc::now().timestamp().to_string(),
+                    )?;
                 }
             }
             let e2 = engine.clone();
             std::thread::spawn(move || daemon::run(e2));
-            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(web::serve(engine, &listen))?;
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(web::serve(engine, &listen))?;
         }
         Cmd::Open { query } => {
             let q = query.join(" ");
-            let url = if q.is_empty() { format!("http://{}/", cfg.listen) } else { format!("http://{}/?q={}", cfg.listen, web::enc(&q)) };
-            let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-            if std::process::Command::new(opener).arg(&url).status().map(|s| !s.success()).unwrap_or(true) {
+            let url = if q.is_empty() {
+                format!("http://{}/", cfg.listen)
+            } else {
+                format!("http://{}/?q={}", cfg.listen, web::enc(&q))
+            };
+            let opener = if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
+            if std::process::Command::new(opener)
+                .arg(&url)
+                .status()
+                .map(|s| !s.success())
+                .unwrap_or(true)
+            {
                 println!("{url}");
             }
         }
@@ -186,7 +232,11 @@ fn main() -> Result<()> {
             // Unlike the daemon, the CLI covers sessions from before `serve` first ran.
             let cands = summarize::candidates(&c, &engine.cfg, true, force)?;
             let n = cands.len().min(limit);
-            let est: f64 = cands.iter().take(limit).map(|x| engine.llm.estimate(x.digest.len() + 700, 300)).sum();
+            let est: f64 = cands
+                .iter()
+                .take(limit)
+                .map(|x| engine.llm.estimate(x.digest.len() + 700, 300))
+                .sum();
             println!(
                 "{n} sessions to summarize, about ${est:.2}. Spent ${:.2} of ${:.2} this month.",
                 store::month_spend(&c)?,
@@ -196,19 +246,44 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             if !engine.llm.summaries_enabled() {
-                bail!("summaries are off: set {} and keep llm.summaries = true", engine.cfg.llm.api_key_env);
+                bail!(
+                    "summaries are off: set {} and keep llm.summaries = true",
+                    engine.cfg.llm.api_key_env
+                );
             }
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-            let done = rt.block_on(summarize::run(&engine.llm, &engine.cfg, &engine.db, true, force, limit, true))?;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let done = rt.block_on(summarize::run(
+                &engine.llm,
+                &engine.cfg,
+                &engine.db,
+                true,
+                force,
+                limit,
+                true,
+            ))?;
             engine.refresh(false)?;
-            println!("Summarized {done} sessions. Spent ${:.2} this month.", store::month_spend(&c)?);
+            println!(
+                "Summarized {done} sessions. Spent ${:.2} this month.",
+                store::month_spend(&c)?
+            );
         }
-        Cmd::Eval { file, rewrite, verbose } => {
+        Cmd::Eval {
+            file,
+            rewrite,
+            verbose,
+        } => {
             let engine = search::Engine::open(cfg)?;
             if let Err(e) = engine.refresh(false) {
                 tracing::debug!("catch-up index skipped: {e:#}");
             }
-            eval::run(&engine, &file.unwrap_or_else(|| config::config_dir().join("eval.toml")), rewrite, verbose)?;
+            eval::run(
+                &engine,
+                &file.unwrap_or_else(|| config::config_dir().join("eval.toml")),
+                rewrite,
+                verbose,
+            )?;
         }
         Cmd::InstallService => install_service()?,
         Cmd::Doctor => doctor(cfg)?,
@@ -216,7 +291,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn print_results(engine: &search::Engine, res: &search::Results, limit: usize, json: bool) -> Result<()> {
+fn print_results(
+    engine: &search::Engine,
+    res: &search::Results,
+    limit: usize,
+    json: bool,
+) -> Result<()> {
     let cat = engine.catalog();
     if json {
         let out: Vec<_> = res
@@ -239,7 +319,9 @@ fn print_results(engine: &search::Engine, res: &search::Results, limit: usize, j
         eprintln!("note: {note}");
     }
     for h in res.hits.iter().take(limit) {
-        let Some(s) = cat.sessions.get(&h.session) else { continue };
+        let Some(s) = cat.sessions.get(&h.session) else {
+            continue;
+        };
         println!(
             "{:>6.3}  {}  {:<6} {:<28} {}",
             h.score,
@@ -250,14 +332,24 @@ fn print_results(engine: &search::Engine, res: &search::Results, limit: usize, j
         );
         println!("        {}  [{}]", resume_command(s), h.reasons.join(", "));
     }
-    eprintln!("{} sessions matched, {} ms ({})", res.total, res.took_ms, res.stage);
+    eprintln!(
+        "{} sessions matched, {} ms ({})",
+        res.total, res.took_ms, res.stage
+    );
     Ok(())
 }
 
 pub fn resume_command(s: &store::SessionMeta) -> String {
-    let cd = s.cwd.as_deref().map(|c| format!("cd {} && ", util::shell_quote(c))).unwrap_or_default();
+    let cd = s
+        .cwd
+        .as_deref()
+        .map(|c| format!("cd {} && ", util::shell_quote(c)))
+        .unwrap_or_default();
     match s.source.as_str() {
-        "claude" => format!("{cd}claude --resume {}", s.parent_id.as_deref().unwrap_or(&s.id)),
+        "claude" => format!(
+            "{cd}claude --resume {}",
+            s.parent_id.as_deref().unwrap_or(&s.id)
+        ),
         _ => format!("{cd}codex resume {}", s.id),
     }
 }
@@ -291,31 +383,55 @@ fn install_service() -> Result<()> {
                 log = log.display()
             ),
         )?;
-        println!("Wrote {}\nStart it with:\n  launchctl bootstrap gui/$(id -u) {}", path.display(), path.display());
+        println!(
+            "Wrote {}\nStart it with:\n  launchctl bootstrap gui/$(id -u) {}",
+            path.display(),
+            path.display()
+        );
     } else if cfg!(target_os = "linux") {
         let path = PathBuf::from(&home).join(".config/systemd/user/recherche.service");
         std::fs::create_dir_all(path.parent().unwrap())?;
         std::fs::write(
             &path,
-            format!("[Unit]\nDescription=recherche session search\n\n[Service]\nExecStart={exe} serve\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"),
+            format!(
+                "[Unit]\nDescription=recherche session search\n\n[Service]\nExecStart={exe} serve\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
+            ),
         )?;
-        println!("Wrote {}\nStart it with:\n  systemctl --user daemon-reload && systemctl --user enable --now recherche", path.display());
+        println!(
+            "Wrote {}\nStart it with:\n  systemctl --user daemon-reload && systemctl --user enable --now recherche",
+            path.display()
+        );
     } else {
-        println!("No service manager support for this OS. Run `{exe} serve` from your init system.");
+        println!(
+            "No service manager support for this OS. Run `{exe} serve` from your init system."
+        );
     }
-    println!("The service does not inherit your shell environment, so OPENROUTER_API_KEY is not set there. For LLM features, add it to the service's environment.");
+    println!(
+        "The service does not inherit your shell environment, so OPENROUTER_API_KEY is not set there. For LLM features, add it to the service's environment."
+    );
     Ok(())
 }
 
 fn doctor(cfg: config::Config) -> Result<()> {
     let engine = search::Engine::open(cfg)?;
     let c = engine.conn()?;
-    println!("config       {}", config::config_dir().join("config.toml").display());
+    println!(
+        "config       {}",
+        config::config_dir().join("config.toml").display()
+    );
     println!("data         {}", config::data_dir().display());
     println!("claude       {}", engine.cfg.claude_dir().display());
     println!("codex        {}", engine.cfg.codex_dir().display());
     let mut st = c.prepare("SELECT source, COUNT(*), SUM(skip), SUM(bad_lines), SUM(summary IS NOT NULL) FROM sessions GROUP BY source")?;
-    for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?, r.get::<_, i64>(4)?)))? {
+    for row in st.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, i64>(4)?,
+        ))
+    })? {
         let (src, n, skip, bad, sum) = row?;
         println!("{src:<12} {n} sessions, {skip} skipped, {sum} summarized, {bad} unparsed lines");
     }
@@ -330,7 +446,11 @@ fn doctor(cfg: config::Config) -> Result<()> {
     let turns: i64 = c.query_row("SELECT COUNT(*) FROM turns", [], |r| r.get(0))?;
     let dups: i64 = c.query_row("SELECT COUNT(*) FROM turns WHERE dup = 1", [], |r| r.get(0))?;
     println!("turns        {turns} ({dups} duplicates from forks or replays)");
-    println!("index        {} documents, {} vectors", engine.lex.num_docs(), engine.vecs.read().unwrap().len());
+    println!(
+        "index        {} documents, {} vectors",
+        engine.lex.num_docs(),
+        engine.vecs.read().unwrap().len()
+    );
     let key = std::env::var(&engine.cfg.llm.api_key_env).is_ok();
     println!(
         "llm          {} ({} {}), ${:.2} of ${:.2} spent this month",
