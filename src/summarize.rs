@@ -18,8 +18,8 @@ pub struct Candidate {
 
 /// Sessions due for a summary. Without `backfill`, only sessions that
 /// started after the daemon first ran are picked; older ones wait for an
-/// explicit `recherche summarize --all`.
-pub fn candidates(c: &Connection, cfg: &Config, backfill: bool) -> Result<Vec<Candidate>> {
+/// explicit `recherche summarize --all`. `force` bypasses only the growth check.
+pub fn candidates(c: &Connection, cfg: &Config, backfill: bool, force: bool) -> Result<Vec<Candidate>> {
     let cutoff: i64 = if backfill { 0 } else { store::get_meta(c, "auto_summary_since")?.and_then(|v| v.parse().ok()).unwrap_or(i64::MAX) };
     let idle_before = chrono::Utc::now().timestamp() - cfg.llm.idle_minutes * 60;
     let mut st = c.prepare(
@@ -35,7 +35,7 @@ pub fn candidates(c: &Connection, cfg: &Config, backfill: bool) -> Result<Vec<Ca
             continue;
         }
         // Re-summarize only once a session has grown by half since its summary.
-        if done.is_some_and(|d| turns < d + d / 2 + 2) {
+        if !force && done.is_some_and(|d| turns < d + d / 2 + 2) {
             continue;
         }
         out.push(Candidate { digest: digest(c, &id)?, id, turns });
@@ -96,13 +96,13 @@ pub fn digest(c: &Connection, id: &str) -> Result<String> {
 /// Summarizes up to `limit` candidates. Stops at the budget or on the first
 /// API failure, because the next call would most likely fail the same way.
 /// With `progress`, prints one line per session to stderr (for the CLI).
-pub async fn run(llm: &Llm, cfg: &Config, db: &std::path::Path, backfill: bool, limit: usize, progress: bool) -> Result<usize> {
+pub async fn run(llm: &Llm, cfg: &Config, db: &std::path::Path, backfill: bool, force: bool, limit: usize, progress: bool) -> Result<usize> {
     if !llm.summaries_enabled() {
         return Ok(0);
     }
     let todo = {
         let c = store::open(db)?;
-        candidates(&c, cfg, backfill)?
+        candidates(&c, cfg, backfill, force)?
     };
     let total = todo.len().min(limit);
     let started = std::time::Instant::now();
@@ -133,4 +133,49 @@ pub async fn run(llm: &Llm, cfg: &Config, db: &std::path::Path, backfill: bool, 
         }
     }
     Ok(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_includes_unchanged_sessions_but_preserves_eligibility_rules() -> Result<()> {
+        let c = store::open(std::path::Path::new(":memory:"))?;
+        let now = chrono::Utc::now().timestamp();
+        store::set_meta(&c, "auto_summary_since", &(now - 10_800).to_string())?;
+        let mut cfg = Config::default();
+        cfg.llm.summarize_sources = vec!["claude".into()];
+        cfg.llm.summarize_exclude_paths = vec!["/excluded".into()];
+        for id in ["unchanged", "grown", "new", "active", "excluded", "source", "child", "skipped", "empty", "older"] {
+            c.execute(
+                "INSERT INTO sessions (id, source, host, cwd, started, ended, turn_count, summary_turns, summary, archive_path)
+                 VALUES (?, 'claude', 'test', '/project', ?, ?, 10, 10, 'Existing summary', '')",
+                params![id, now - 7200, now - 3600],
+            )?;
+        }
+        c.execute_batch(
+            "UPDATE sessions SET turn_count = 17 WHERE id = 'grown';
+             UPDATE sessions SET summary_turns = NULL, summary = NULL WHERE id = 'new';
+             UPDATE sessions SET cwd = '/excluded/project' WHERE id = 'excluded';
+             UPDATE sessions SET source = 'codex' WHERE id = 'source';
+             UPDATE sessions SET parent_id = 'unchanged' WHERE id = 'child';
+             UPDATE sessions SET skip = 1 WHERE id = 'skipped';
+             UPDATE sessions SET turn_count = 0 WHERE id = 'empty';",
+        )?;
+        c.execute("UPDATE sessions SET ended = ? WHERE id = 'active'", [now])?;
+        c.execute("UPDATE sessions SET started = ? WHERE id = 'older'", [now - 14_400])?;
+        let ids = |backfill, force| -> Result<Vec<String>> {
+            let mut ids: Vec<_> = candidates(&c, &cfg, backfill, force)?.into_iter().map(|s| s.id).collect();
+            ids.sort();
+            Ok(ids)
+        };
+        assert_eq!(ids(false, false)?, ["grown", "new"]);
+        assert_eq!(ids(true, false)?, ["grown", "new"]);
+        assert_eq!(ids(false, true)?, ["grown", "new", "unchanged"]);
+        assert_eq!(ids(true, true)?, ["grown", "new", "older", "unchanged"]);
+        let stored: (String, i64) = c.query_row("SELECT summary, summary_turns FROM sessions WHERE id = 'unchanged'", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        assert_eq!(stored, ("Existing summary".into(), 10));
+        Ok(())
+    }
 }
