@@ -176,7 +176,7 @@ impl VecStore {
     pub fn load(c: &Connection) -> Result<Self> {
         let mut vs = VecStore::default();
         let mut push = |sid: String, turn: Option<i64>, blob: Vec<u8>| {
-            let v: Vec<f32> = blob.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+            let v: Vec<f32> = blob.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
             if vs.dim == 0 {
                 vs.dim = v.len();
             }
