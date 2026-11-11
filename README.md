@@ -36,6 +36,8 @@ With `OPENROUTER_API_KEY` set, two features call a model through [OpenRouter](ht
 - **Query rewrite**: for sentence-like queries whose top results score weakly, the query is expanded into terms the transcript may have used ("history tables" becomes "audit table, SCD2, temporal table"). The refined results stream in after the first ones; the reranker still scores against your own words.
 - **Session summaries**: a title, a short summary, a kind and an outcome for each finished session, written from a capped digest of the session rather than the whole transcript. While `serve` runs, sessions that started after it first ran are summarized once they go idle. Run `recherche summarize --all` once for the backlog.
 
+To regenerate existing summaries, preview with `recherche summarize --all --force --dry-run`, then run `recherche summarize --all --force`. This still respects the idle requirement, source/path exclusions, session limit and monthly budget. Stop the running `serve` process or service before running the summarization command so it can update the search index.
+
 Any OpenRouter model works: set `llm.model`, and `llm.rewrite_model` to use a different (faster) model for rewrite. Any other OpenAI-compatible API works too through `llm.base_url`.
 
 Spend is recorded from the cost OpenRouter reports for each call and capped at `llm.monthly_budget_usd` (default $5). At the cap, LLM features stop for the month and search keeps working. Requests ask OpenRouter to use only hosts that don't store or train on prompts (`llm.deny_data_collection`). Both Claude Code and Codex sessions are summarized by default; use `llm.summarize_sources` to limit this to one agent, and `llm.summarize_exclude_paths` to keep directories such as work repos out.
