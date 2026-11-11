@@ -348,6 +348,17 @@ fn reason_label(r: &str) -> String {
     }
 }
 
+/// Renders new bullet summaries while keeping existing prose summaries readable.
+fn summary_html(text: &str, terms: &[String]) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if !lines.is_empty() && lines.iter().all(|l| l.starts_with("- ")) {
+        let items: String = lines.iter().map(|l| format!("<li>{}</li>", highlight(&l[2..], terms, None).0)).collect();
+        format!("<ul>{items}</ul>")
+    } else {
+        highlight(text, terms, None).0
+    }
+}
+
 fn result_view(cat: &Catalog, h: &Hit, texts: &std::collections::HashMap<i64, (i64, String, String)>, terms: &[String], q: &str) -> Option<ResultView> {
     let s = cat.sessions.get(&h.session)?;
     let mut snippets = vec![];
@@ -363,7 +374,7 @@ fn result_view(cat: &Catalog, h: &Hit, texts: &std::collections::HashMap<i64, (i
             break;
         }
     }
-    let blurb = s.summary.clone().or_else(|| s.recap.clone()).map(|b| highlight(&crate::model::clip_chars(&b, 320), terms, None).0);
+    let blurb = s.summary.as_deref().or(s.recap.as_deref()).map(|b| summary_html(&crate::model::clip_chars(b, 320), terms));
     let qs = if q.is_empty() { String::new() } else { format!("?q={}", enc(q)) };
     let anchor = h.turns.first().and_then(|t| texts.get(t)).map(|(idx, _, _)| format!("#t{idx}")).unwrap_or_default();
     Some(ResultView {
@@ -698,7 +709,7 @@ async fn session_page(State(e): State<AppState>, AxPath(id): AxPath<String>, Que
         let tpl = SessionTpl {
             title: if s.title.is_empty() { "Untitled session".into() } else { s.title.clone() },
             agent: s.source.clone(),
-            summary: s.summary.clone().or_else(|| s.recap.clone()),
+            summary: s.summary.as_deref().or(s.recap.as_deref()).map(|s| summary_html(s, &[])),
             chips: chips_for(&cat, s),
             cwd: s.cwd.clone().unwrap_or_default(),
             cwd_gone: s.cwd.as_ref().is_some_and(|c| !std::path::Path::new(c).exists()),
@@ -829,6 +840,38 @@ mod tests {
         assert!(h.contains("<mark>Fix</mark>"), "{h}");
         assert!(h.contains("&lt;<mark>ordering</mark>&gt;"), "{h}");
         assert!(!h.contains("<mark>reorder"), "{h}");
+    }
+
+    #[test]
+    fn session_summary_renders_bullets_and_escapes_content() {
+        for (summary, bullet_count) in [
+            ("- Fixed <script>alert(1)</script>.\n\n- Tests passed & staging is pending.", 2),
+            ("Fixed <script>alert(1)</script>. Tests passed & staging is pending.", 0),
+        ] {
+            let html = SessionTpl {
+                title: "Summary example".into(),
+                agent: "claude".into(),
+                summary: Some(summary_html(summary, &[])),
+                chips: vec![],
+                cwd: String::new(),
+                cwd_gone: false,
+                started: String::new(),
+                ended: String::new(),
+                model: String::new(),
+                resume: String::new(),
+                turns: vec![],
+                matches: vec![],
+                entities: vec![],
+                parent: None,
+                children: vec![],
+                q: String::new(),
+                back: "/".into(),
+            }.render().unwrap();
+            assert_eq!(html.matches("<li>").count(), bullet_count);
+            assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+            assert!(html.contains("Tests passed &amp; staging is pending."));
+            assert!(!html.contains("<script>alert(1)</script>"));
+        }
     }
 
     #[test]
