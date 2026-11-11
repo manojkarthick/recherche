@@ -22,12 +22,26 @@ Other commands:
 | Command | What it does |
 | --- | --- |
 | `recherche search "<query>"` | The same search from the terminal; `--json` for scripts |
+| `recherche list [--limit N] [--since PERIOD] [--json]` | Lists sessions newest activity first; defaults to 10 sessions of any age; `--json` for scripts |
 | `recherche open "<query>"` | Opens the web UI with that query |
 | `recherche index [--rebuild]` | One import pass; `--rebuild` reparses everything from the archive |
 | `recherche summarize [--redo [N]] [--dry-run]` | Summarizes sessions that need it; `--redo` regenerates existing summaries; `--dry-run` shows the count and estimated cost |
 | `recherche eval [-v] [--rewrite]` | Scores ranking configurations against your eval queries |
 | `recherche install-service` | Writes a launchd agent (macOS) or systemd user unit (Linux) for `serve` |
 | `recherche doctor` | Paths, counts and unparsed lines |
+
+Use `recherche list --limit 25 --since 7d` to show up to 25 sessions active in
+the last seven days. `--since` accepts a local date (`YYYY-MM-DD`, from midnight)
+or a duration ending in `d`, `w`, `m` or `y`; months mean 30 days and years mean
+365 days, as in search. Each entry shows the last activity date, agent, repo,
+title and resume command. Listing catches up new session data without running
+embedding models.
+
+Add `--json` for a JSON array with `id`, `agent`, `title`, `repo`, `cwd`,
+`started`, `ended` and `resume` fields. Timestamps are Unix seconds; missing
+repos and working directories are `null`. JSON preserves full titles and repo
+names and uses the same ordering, limit and time filter as the text output.
+An empty list prints `[]`. The session count and logs go to stderr.
 
 ## LLM features (optional)
 
