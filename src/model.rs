@@ -58,13 +58,27 @@ pub struct Fact {
 }
 
 impl Fact {
-    pub fn new(kind: &'static str, key: impl Into<String>, display: impl Into<String>, origin: &'static str, strength: i32) -> Self {
-        Self { kind, key: key.into(), display: display.into(), origin, strength }
+    pub fn new(
+        kind: &'static str,
+        key: impl Into<String>,
+        display: impl Into<String>,
+        origin: &'static str,
+        strength: i32,
+    ) -> Self {
+        Self {
+            kind,
+            key: key.into(),
+            display: display.into(),
+            origin,
+            strength,
+        }
     }
 }
 
 pub fn parse_ts(s: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
 }
 
 /// Keeps the head and tail of long tool output, plus every line that looks
@@ -77,7 +91,12 @@ pub fn clip_output(text: &str, head: usize, tail: usize) -> String {
     let mut out: Vec<&str> = lines[..head].to_vec();
     for l in &lines[head..lines.len() - tail] {
         let low = l.to_ascii_lowercase();
-        if low.contains("error") || low.contains("panic") || low.contains("fatal") || low.contains("exception") || low.contains("failed") {
+        if low.contains("error")
+            || low.contains("panic")
+            || low.contains("fatal")
+            || low.contains("exception")
+            || low.contains("failed")
+        {
             out.push(l);
         }
     }

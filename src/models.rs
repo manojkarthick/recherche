@@ -2,10 +2,13 @@
 //! both ONNX through `ort` inside this process. They load on first use and
 //! unload after `model_idle_seconds`, so the idle daemon stays small.
 
-use crate::config::{cache_dir, Search};
-use anyhow::{anyhow, Result};
-use fastembed::{AutoDevicePolicy, EmbeddingModel, RerankInitOptions, RerankerModel, TextEmbedding, TextInitOptions, TextRerank};
-use rusqlite::{params, Connection};
+use crate::config::{Search, cache_dir};
+use anyhow::{Result, anyhow};
+use fastembed::{
+    AutoDevicePolicy, EmbeddingModel, RerankInitOptions, RerankerModel, TextEmbedding,
+    TextInitOptions, TextRerank,
+};
+use rusqlite::{Connection, params};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -30,10 +33,18 @@ pub struct Models {
 
 impl Models {
     pub fn new(cfg: Search) -> Self {
-        Self { cfg, embed: Mutex::new(None), rerank: Mutex::new(None) }
+        Self {
+            cfg,
+            embed: Mutex::new(None),
+            rerank: Mutex::new(None),
+        }
     }
 
-    fn with_embedder<T>(&self, query: bool, f: impl FnOnce(&mut TextEmbedding) -> Result<T>) -> Result<T> {
+    fn with_embedder<T>(
+        &self,
+        query: bool,
+        f: impl FnOnce(&mut TextEmbedding) -> Result<T>,
+    ) -> Result<T> {
         let mut g = self.embed.lock().unwrap();
         if g.is_none() {
             let m = TextEmbedding::try_new(
@@ -57,11 +68,16 @@ impl Models {
     }
 
     pub fn embed_docs(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.with_embedder(false, |m| m.embed(texts, Some(32)).map_err(|e| anyhow!("{e}")))
+        self.with_embedder(false, |m| {
+            m.embed(texts, Some(32)).map_err(|e| anyhow!("{e}"))
+        })
     }
 
     pub fn embed_query(&self, q: &str) -> Result<Vec<f32>> {
-        let mut v = self.with_embedder(true, |m| m.embed(&[format!("{QUERY_PREFIX}{q}")], None).map_err(|e| anyhow!("{e}")))?;
+        let mut v = self.with_embedder(true, |m| {
+            m.embed(&[format!("{QUERY_PREFIX}{q}")], None)
+                .map_err(|e| anyhow!("{e}"))
+        })?;
         Ok(normalize(v.remove(0)))
     }
 
@@ -69,14 +85,20 @@ impl Models {
     pub fn rerank(&self, q: &str, docs: &[String]) -> Result<Vec<f32>> {
         let mut g = self.rerank.lock().unwrap();
         if g.is_none() {
-            let model = if self.cfg.rerank_model == "bge-base" { RerankerModel::BGERerankerBase } else { RerankerModel::JINARerankerV1TurboEn };
+            let model = if self.cfg.rerank_model == "bge-base" {
+                RerankerModel::BGERerankerBase
+            } else {
+                RerankerModel::JINARerankerV1TurboEn
+            };
             let m = TextRerank::try_new(
                 RerankInitOptions::new(model)
                     .with_cache_dir(cache_dir().join("models"))
                     .with_show_download_progress(false)
                     .with_max_length(256)
                     .with_auto_device(AutoDevicePolicy::PreferCPU)
-                    .with_intra_threads(std::thread::available_parallelism().map_or(4, |n| n.get())),
+                    .with_intra_threads(
+                        std::thread::available_parallelism().map_or(4, |n| n.get()),
+                    ),
             )
             .map_err(|e| anyhow!("loading reranker: {e}"))?;
             *g = Some((m, None));
@@ -84,7 +106,9 @@ impl Models {
         let (m, used) = g.as_mut().unwrap();
         *used = Some(Instant::now());
         let refs: Vec<&str> = docs.iter().map(String::as_str).collect();
-        let res = m.rerank(q, refs, false, Some(64)).map_err(|e| anyhow!("{e}"))?;
+        let res = m
+            .rerank(q, refs, false, Some(64))
+            .map_err(|e| anyhow!("{e}"))?;
         let mut scores = vec![f32::MIN; docs.len()];
         for r in res {
             scores[r.index] = r.score;
@@ -120,7 +144,11 @@ pub fn normalize(mut v: Vec<f32>) -> Vec<f32> {
 
 /// The text a turn is embedded from: the prompt carries most of the meaning.
 fn turn_embed_text(user: &str, assistant: &str) -> String {
-    format!("{}\n{}", crate::model::clip_chars(user, 900), crate::model::clip_chars(assistant, 600))
+    format!(
+        "{}\n{}",
+        crate::model::clip_chars(user, 900),
+        crate::model::clip_chars(assistant, 600)
+    )
 }
 
 /// Embeds turns and cards that have no vector yet. Vectors are keyed by a
@@ -133,7 +161,13 @@ pub fn embed_missing(models: &Models, c: &Connection) -> Result<usize> {
              WHERE s.skip = 0 AND t.dup = 0 AND t.vhash IS NOT NULL AND (t.clean_user != '' OR t.assistant_text != '')
                AND NOT EXISTS (SELECT 1 FROM vecs v WHERE v.hash = t.vhash)",
         )?;
-        for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))? {
+        for row in st.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })? {
             let (h, u, a) = row?;
             todo.push((h, turn_embed_text(&u, &a)));
         }
@@ -176,7 +210,12 @@ impl VecStore {
     pub fn load(c: &Connection) -> Result<Self> {
         let mut vs = VecStore::default();
         let mut push = |sid: String, turn: Option<i64>, blob: Vec<u8>| {
-            let v: Vec<f32> = blob.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+            let v: Vec<f32> = blob
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b))
+                .collect();
             if vs.dim == 0 {
                 vs.dim = v.len();
             }
@@ -189,12 +228,22 @@ impl VecStore {
             "SELECT t.session_id, t.id, v.v FROM turns t JOIN sessions s ON s.id = t.session_id JOIN vecs v ON v.hash = t.vhash
              WHERE s.skip = 0 AND t.dup = 0",
         )?;
-        for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, Vec<u8>>(2)?)))? {
+        for row in st.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+            ))
+        })? {
             let (s, t, b) = row?;
             push(s, Some(t), b);
         }
-        let mut st = c.prepare("SELECT s.id, v.v FROM sessions s JOIN vecs v ON v.hash = s.card_hash WHERE s.skip = 0")?;
-        for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)))? {
+        let mut st = c.prepare(
+            "SELECT s.id, v.v FROM sessions s JOIN vecs v ON v.hash = s.card_hash WHERE s.skip = 0",
+        )?;
+        for row in st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })? {
             let (s, b) = row?;
             push(s, None, b);
         }
@@ -206,8 +255,12 @@ impl VecStore {
         if self.dim == 0 || q.len() != self.dim {
             return vec![];
         }
-        let mut scored: Vec<(usize, f32)> =
-            self.data.chunks_exact(self.dim).enumerate().map(|(i, v)| (i, v.iter().zip(q).map(|(a, b)| a * b).sum())).collect();
+        let mut scored: Vec<(usize, f32)> = self
+            .data
+            .chunks_exact(self.dim)
+            .enumerate()
+            .map(|(i, v)| (i, v.iter().zip(q).map(|(a, b)| a * b).sum()))
+            .collect();
         let k = k.min(scored.len());
         if k == 0 {
             return vec![];

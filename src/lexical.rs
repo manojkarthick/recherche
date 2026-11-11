@@ -7,15 +7,21 @@
 
 use crate::util::expand_idents;
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::collections::HashSet;
 use std::path::Path;
 use tantivy::collector::TopDocs;
-use tantivy::query::{BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhraseQuery, Query, TermQuery};
-use tantivy::schema::{
-    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, FAST, INDEXED, STORED, STRING,
+use tantivy::query::{
+    BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhraseQuery, Query, TermQuery,
 };
-use tantivy::tokenizer::{Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, StopWordFilter, TextAnalyzer, WhitespaceTokenizer};
+use tantivy::schema::{
+    FAST, Field, INDEXED, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing,
+    TextOptions, Value,
+};
+use tantivy::tokenizer::{
+    Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, StopWordFilter, TextAnalyzer,
+    WhitespaceTokenizer,
+};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
 #[derive(Clone, Copy)]
@@ -44,14 +50,26 @@ pub struct LexHit {
 }
 
 /// Field weights: the user's own words count most, tool output least.
-const BOOSTS: [(&str, f32); 5] = [("user", 3.0), ("card", 2.5), ("assistant", 1.2), ("ident", 1.0), ("tool", 0.4)];
+const BOOSTS: [(&str, f32); 5] = [
+    ("user", 3.0),
+    ("card", 2.5),
+    ("assistant", 1.2),
+    ("ident", 1.0),
+    ("tool", 0.4),
+];
 
 fn schema() -> Schema {
     let mut b = Schema::builder();
-    let en = TextOptions::default()
-        .set_indexing_options(TextFieldIndexing::default().set_tokenizer("en").set_index_option(IndexRecordOption::WithFreqsAndPositions));
-    let ident = TextOptions::default()
-        .set_indexing_options(TextFieldIndexing::default().set_tokenizer("ident").set_index_option(IndexRecordOption::WithFreqs));
+    let en = TextOptions::default().set_indexing_options(
+        TextFieldIndexing::default()
+            .set_tokenizer("en")
+            .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+    );
+    let ident = TextOptions::default().set_indexing_options(
+        TextFieldIndexing::default()
+            .set_tokenizer("ident")
+            .set_index_option(IndexRecordOption::WithFreqs),
+    );
     b.add_text_field("session", STRING | STORED);
     b.add_i64_field("turn", INDEXED | STORED | FAST);
     b.add_text_field("user", en.clone());
@@ -78,9 +96,13 @@ impl Lexical {
                 .filter(Stemmer::new(Language::English))
                 .build(),
         );
-        index
-            .tokenizers()
-            .register("ident", TextAnalyzer::builder(WhitespaceTokenizer::default()).filter(RemoveLongFilter::limit(120)).filter(LowerCaser).build());
+        index.tokenizers().register(
+            "ident",
+            TextAnalyzer::builder(WhitespaceTokenizer::default())
+                .filter(RemoveLongFilter::limit(120))
+                .filter(LowerCaser)
+                .build(),
+        );
         let s = index.schema();
         let g = |n: &str| s.get_field(n).unwrap();
         let f = Fields {
@@ -92,7 +114,10 @@ impl Lexical {
             ident: g("ident"),
             card: g("card"),
         };
-        let reader = index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::Manual)
+            .try_into()?;
         Ok(Self { index, reader, f })
     }
 
@@ -106,15 +131,26 @@ impl Lexical {
 
     /// Rewrites the documents of every dirty session. Also writes the cleaned
     /// prompt, duplicate flag and embedding key of each turn, and the card.
-    pub fn update(&self, c: &mut Connection, boilerplate_min: i64, everything: bool) -> Result<usize> {
+    pub fn update(
+        &self,
+        c: &mut Connection,
+        boilerplate_min: i64,
+        everything: bool,
+    ) -> Result<usize> {
         let boiler: HashSet<String> = {
             let mut st = c.prepare("SELECT hash FROM blocks GROUP BY hash HAVING COUNT(*) >= ?")?;
-            st.query_map([boilerplate_min], |r| r.get(0))?.collect::<Result<_, _>>()?
+            st.query_map([boilerplate_min], |r| r.get(0))?
+                .collect::<Result<_, _>>()?
         };
         let dirty: Vec<(String, bool)> = {
-            let sql = if everything { "SELECT id, skip FROM sessions" } else { "SELECT id, skip FROM sessions WHERE dirty = 1" };
+            let sql = if everything {
+                "SELECT id, skip FROM sessions"
+            } else {
+                "SELECT id, skip FROM sessions WHERE dirty = 1"
+            };
             let mut st = c.prepare(sql)?;
-            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<_, _>>()?
         };
         if dirty.is_empty() {
             return Ok(0);
@@ -133,8 +169,19 @@ impl Lexical {
                 let mut st = tx.prepare_cached(
                     "SELECT id, user_text, assistant_text, tool_text, files, commands, errors, ukey FROM turns WHERE session_id = ? ORDER BY idx",
                 )?;
-                st.query_map([sid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))?
-                    .collect::<Result<_, _>>()?
+                st.query_map([sid], |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                    ))
+                })?
+                .collect::<Result<_, _>>()?
             };
             for (id, user, assistant, tool, files, commands, errors, ukey) in rows {
                 let owner: String = tx
@@ -146,7 +193,10 @@ impl Lexical {
                 let dup = owner != *sid;
                 let clean = clean_prompt(&user, &boiler);
                 let vhash = crate::util::hash(&[&clean, &assistant]);
-                tx.prepare_cached("UPDATE turns SET clean_user = ?, dup = ?, vhash = ? WHERE id = ?")?.execute(params![clean, dup, vhash, id])?;
+                tx.prepare_cached(
+                    "UPDATE turns SET clean_user = ?, dup = ?, vhash = ? WHERE id = ?",
+                )?
+                .execute(params![clean, dup, vhash, id])?;
                 if dup || (clean.is_empty() && assistant.is_empty()) {
                     continue;
                 }
@@ -156,12 +206,20 @@ impl Lexical {
                 d.add_text(self.f.user, &clean);
                 d.add_text(self.f.assistant, &assistant);
                 d.add_text(self.f.tool, &tool);
-                d.add_text(self.f.ident, expand_idents(&format!("{clean}\n{assistant}\n{files}\n{commands}\n{errors}")));
+                d.add_text(
+                    self.f.ident,
+                    expand_idents(&format!(
+                        "{clean}\n{assistant}\n{files}\n{commands}\n{errors}"
+                    )),
+                );
                 w.add_document(d)?;
             }
             let card = card_text(&tx, sid)?;
             let card_hash = crate::util::hash(&["card", &card]);
-            tx.execute("UPDATE sessions SET card_text = ?, card_hash = ? WHERE id = ?", params![card, card_hash, sid])?;
+            tx.execute(
+                "UPDATE sessions SET card_text = ?, card_hash = ? WHERE id = ?",
+                params![card, card_hash, sid],
+            )?;
             let mut d = TantivyDocument::default();
             d.add_text(self.f.session, sid);
             d.add_i64(self.f.turn, -1);
@@ -176,21 +234,42 @@ impl Lexical {
     }
 
     /// BM25 over all fields with their boosts. `phrases` must appear in order.
-    pub fn search(&self, text: &str, phrases: &[String], limit: usize, fuzzy: bool) -> Result<Vec<LexHit>> {
+    pub fn search(
+        &self,
+        text: &str,
+        phrases: &[String],
+        limit: usize,
+        fuzzy: bool,
+    ) -> Result<Vec<LexHit>> {
         let searcher = self.reader.searcher();
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![];
         for (name, boost) in BOOSTS {
             let field = self.field(name);
-            let input = if name == "ident" { expand_idents(text) } else { text.to_string() };
+            let input = if name == "ident" {
+                expand_idents(text)
+            } else {
+                text.to_string()
+            };
             let terms = self.tokens(field, &input);
             if terms.is_empty() {
                 continue;
             }
             let q: Vec<(Occur, Box<dyn Query>)> = terms
                 .iter()
-                .map(|t| (Occur::Should, Box::new(TermQuery::new(Term::from_field_text(field, t), IndexRecordOption::WithFreqs)) as Box<dyn Query>))
+                .map(|t| {
+                    (
+                        Occur::Should,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(field, t),
+                            IndexRecordOption::WithFreqs,
+                        )) as Box<dyn Query>,
+                    )
+                })
                 .collect();
-            clauses.push((Occur::Should, Box::new(BoostQuery::new(Box::new(BooleanQuery::new(q)), boost))));
+            clauses.push((
+                Occur::Should,
+                Box::new(BoostQuery::new(Box::new(BooleanQuery::new(q)), boost)),
+            ));
             if fuzzy && name == "ident" {
                 for t in terms.iter().filter(|t| t.chars().count() >= 5) {
                     let fq = FuzzyTermQuery::new(Term::from_field_text(field, t), 1, true);
@@ -201,11 +280,27 @@ impl Lexical {
         for p in phrases {
             for name in ["user", "assistant", "card", "tool"] {
                 let field = self.field(name);
-                let terms: Vec<Term> = self.tokens(field, p).into_iter().map(|t| Term::from_field_text(field, &t)).collect();
+                let terms: Vec<Term> = self
+                    .tokens(field, p)
+                    .into_iter()
+                    .map(|t| Term::from_field_text(field, &t))
+                    .collect();
                 match terms.len() {
                     0 => {}
-                    1 => clauses.push((Occur::Should, Box::new(BoostQuery::new(Box::new(TermQuery::new(terms[0].clone(), IndexRecordOption::WithFreqs)), 4.0)))),
-                    _ => clauses.push((Occur::Should, Box::new(BoostQuery::new(Box::new(PhraseQuery::new(terms)), 4.0)))),
+                    1 => clauses.push((
+                        Occur::Should,
+                        Box::new(BoostQuery::new(
+                            Box::new(TermQuery::new(
+                                terms[0].clone(),
+                                IndexRecordOption::WithFreqs,
+                            )),
+                            4.0,
+                        )),
+                    )),
+                    _ => clauses.push((
+                        Occur::Should,
+                        Box::new(BoostQuery::new(Box::new(PhraseQuery::new(terms)), 4.0)),
+                    )),
                 }
             }
         }
@@ -217,15 +312,28 @@ impl Lexical {
         let mut out = Vec::with_capacity(top.len());
         for (score, addr) in top {
             let d: TantivyDocument = searcher.doc(addr)?;
-            let session = d.get_first(self.f.session).and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let turn = d.get_first(self.f.turn).and_then(|v| v.as_i64()).filter(|t| *t >= 0);
-            out.push(LexHit { session, turn, score });
+            let session = d
+                .get_first(self.f.session)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let turn = d
+                .get_first(self.f.turn)
+                .and_then(|v| v.as_i64())
+                .filter(|t| *t >= 0);
+            out.push(LexHit {
+                session,
+                turn,
+                score,
+            });
         }
         Ok(out)
     }
 
     fn tokens(&self, field: Field, text: &str) -> Vec<String> {
-        let Ok(mut a) = self.index.tokenizer_for_field(field) else { return vec![] };
+        let Ok(mut a) = self.index.tokenizer_for_field(field) else {
+            return vec![];
+        };
         let mut ts = a.token_stream(text);
         let mut out = vec![];
         while ts.advance() {
@@ -282,7 +390,10 @@ pub fn card_text(c: &Connection, sid: &str) -> Result<String> {
         [sid],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
     )?;
-    let mut parts: Vec<String> = [title, llm_title, summary, recap, kind, outcome, tags].into_iter().flatten().collect();
+    let mut parts: Vec<String> = [title, llm_title, summary, recap, kind, outcome, tags]
+        .into_iter()
+        .flatten()
+        .collect();
     if let Some(r) = repo {
         parts.push(crate::extract::repo_display(&r));
     }
@@ -290,7 +401,9 @@ pub fn card_text(c: &Connection, sid: &str) -> Result<String> {
         "SELECT kind, display FROM entities WHERE session_id = ? AND kind IN ('pr', 'branch', 'ticket', 'commit', 'file') ORDER BY kind, strength DESC",
     )?;
     let mut files = 0;
-    for row in st.query_map([sid], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+    for row in st.query_map([sid], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })? {
         let (k, d) = row?;
         if k == "file" {
             files += 1;
