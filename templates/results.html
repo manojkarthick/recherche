@@ -1,0 +1,49 @@
+<div class="stage"{% if let Some(u) = stream_url %} hx-ext="sse" sse-connect="{{ u }}" sse-swap="results" sse-close="done"{% endif %}>
+<div class="layout{% if facets.is_empty() %} no-facets{% endif %}">
+{% if !facets.is_empty() %}
+<aside class="facets" aria-label="Narrow results">
+{% for g in facets %}
+<section>
+<h2>{{ g.name }}</h2>
+<ul>
+{% for i in g.items %}<li><a href="{{ i.href }}"{% if i.active %} class="on" aria-current="true"{% endif %}><span class="l">{{ i.label }}</span><span class="n">{{ i.count }}</span></a></li>{% endfor %}
+</ul>
+</section>
+{% endfor %}
+</aside>
+{% endif %}
+<section class="list">
+<p class="status{% if refining %} refining{% endif %}" role="status">{{ status }}</p>
+{% for n in notes %}<p class="note">{{ n }}</p>{% endfor %}
+{% if let Some(h) = empty_hint %}<p class="empty">{{ h }}</p>{% endif %}
+<ol class="results">
+{% for r in results %}
+<li class="result" data-href="{{ r.href }}" data-resume="{{ r.resume }}">
+  <div class="head">
+    <a class="title" href="{{ r.href }}">{{ r.title }}</a>
+    <time title="{{ r.when }}">{{ r.ago }}</time>
+  </div>
+  <div class="meta">
+    <span class="agent {{ r.agent }}">{% if r.agent == "claude" %}Claude Code{% else %}Codex{% endif %}{% if r.is_sub %} subagent{% endif %}</span>
+    {% for c in r.chips %}<a class="{{ c.class }}" href="{{ c.href }}" title="{{ c.title }}">{{ c.label }}</a>{% endfor %}
+  </div>
+  {% if let Some(b) = r.blurb %}<p class="blurb">{{ b|safe }}</p>{% endif %}
+  {% for s in r.snippets %}<p class="snippet">{{ s|safe }}</p>{% endfor %}
+  <div class="foot">
+    <button type="button" class="copy" data-copy="{{ r.resume }}" title="{{ r.resume }}">Copy resume command</button>
+    {% if r.cwd_gone %}<span class="warn" title="This directory no longer exists. Recreate it before resuming.">directory is gone</span>{% endif %}
+    {% if !r.reasons.is_empty() %}<span class="why">Matched on {% for x in r.reasons %}{% if !loop.first %}, {% endif %}{{ x }}{% endfor %}</span>{% endif %}
+    {% if !q.is_empty() %}
+    <form class="fb" hx-post="/feedback" hx-swap="outerHTML">
+      <input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="session" value="{{ r.session_id }}">
+      <button name="label" value="good" title="Add this query and session to the eval set">This was it</button>
+      <button name="label" value="bad" title="Record this as a wrong result for this query">Not this</button>
+    </form>
+    {% endif %}
+  </div>
+</li>
+{% endfor %}
+</ol>
+</section>
+</div>
+</div>

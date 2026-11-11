@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if q.is_empty() %}recherche{% else %}{{ q }} – recherche{% endif %}</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/htmx.min.js"></script>
+<script src="/assets/sse.min.js"></script>
+<script src="/assets/app.js" defer></script>
+</head>
+<body class="search-page">
+<header class="masthead">
+  <a class="wordmark" href="/">recherche</a>
+  <form id="search" action="/" method="get" role="search">
+    <label class="visually-hidden" for="q">Search your sessions</label>
+    <input id="q" name="q" type="search" value="{{ q }}" placeholder="What were you working on?" autocomplete="off" spellcheck="false"{% if q.is_empty() %} autofocus{% endif %}
+      hx-get="/search" hx-trigger="input changed delay:150ms, search" hx-target="#results" hx-include="#search" hx-sync="this:replace">
+    {% for (k, v) in hidden %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+  </form>
+  <p class="hint">Describe it the way you remember it, or paste a ticket, PR, branch or file name. Searching {{ sessions }} sessions from Claude Code and Codex.</p>
+  {% if !active.is_empty() %}<nav class="active-filters" aria-label="Active filters">{% for c in active %}<a class="{{ c.class }}" href="{{ c.href }}" title="{{ c.title }}">{{ c.label }} <span aria-hidden="true">×</span></a>{% endfor %}</nav>{% endif %}
+</header>
+<main id="results">{{ results_html|safe }}</main>
+<footer class="keys"><kbd>/</kbd> search <kbd>j</kbd><kbd>k</kbd> move <kbd>Enter</kbd> open <kbd>c</kbd> copy resume command</footer>
+</body>
+</html>

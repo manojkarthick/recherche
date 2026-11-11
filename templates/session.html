@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }} – recherche</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/app.js" defer></script>
+</head>
+<body class="session-page" data-resume="{{ resume }}">
+<header class="bar">
+  <a class="wordmark small" href="/">recherche</a>
+  <a class="back" href="{{ back }}">{% if q.is_empty() %}Search{% else %}Back to “{{ q }}”{% endif %}</a>
+</header>
+<div class="session">
+<aside class="side">
+  <section class="resume">
+    <h2>Resume</h2>
+    <code>{{ resume }}</code>
+    <button type="button" class="copy" data-copy="{{ resume }}">Copy resume command</button>
+    {% if cwd_gone %}<p class="warn">The directory {{ cwd }} no longer exists. Recreate the worktree before resuming.</p>{% endif %}
+  </section>
+  {% if !matches.is_empty() %}
+  <section>
+    <h2>Matching turns</h2>
+    <ul class="jump">{% for (i, label) in matches %}<li><a href="#t{{ i }}">{{ label }}</a></li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+  {% if let Some((href, t)) = parent %}<section><h2>Started by</h2><a href="{{ href }}">{{ t }}</a></section>{% endif %}
+  {% if !children.is_empty() %}
+  <section><h2>Subagents</h2><ul class="jump">{% for (href, t) in children %}<li><a href="{{ href }}">{{ t }}</a></li>{% endfor %}</ul></section>
+  {% endif %}
+  {% for g in entities %}
+  <section>
+    <h2>{{ g.name }}</h2>
+    <ul class="ents">{% for (label, how, href) in g.items %}<li>{% if href.is_empty() %}<span class="e">{{ label }}</span>{% else %}<a class="e" href="{{ href }}">{{ label }}</a>{% endif %} <span class="how">{{ how }}</span></li>{% endfor %}</ul>
+  </section>
+  {% endfor %}
+</aside>
+<main class="transcript">
+  <h1>{{ title }}</h1>
+  <div class="meta">
+    <span class="agent {{ agent }}">{% if agent == "claude" %}Claude Code{% else %}Codex{% endif %}</span>
+    {% for c in chips %}<a class="{{ c.class }}" href="{{ c.href }}" title="{{ c.title }}">{{ c.label }}</a>{% endfor %}
+  </div>
+  <p class="dates">{{ started }} to {{ ended }}{% if !model.is_empty() %}, {{ model }}{% endif %}<br><span class="cwd">{{ cwd }}</span></p>
+  {% if let Some(s) = summary %}<p class="summary">{{ s }}</p>{% endif %}
+  {% for t in turns %}
+  <article class="turn{% if t.matched %} matched{% endif %}" id="t{{ t.idx }}">
+    <div class="when">{{ t.when }}{% if let Some(b) = t.branch %} on {{ b }}{% endif %}</div>
+    {% if !t.user.is_empty() %}<div class="msg you"><span class="who">You</span><div class="text">{{ t.user|safe }}</div></div>{% endif %}
+    {% if !t.tools.is_empty() %}
+    <details class="tools">
+      <summary>{{ t.tools.len() }} tool {% if t.tools.len() == 1 %}call{% else %}calls{% endif %}</summary>
+      {% for x in t.tools %}
+      <div class="tool{% if x.error %} err{% endif %}"><div class="cmd"><span class="tn">{{ x.name }}</span> {{ x.input }}</div>{% if !x.output.is_empty() %}<pre>{{ x.output }}</pre>{% endif %}</div>
+      {% endfor %}
+    </details>
+    {% endif %}
+    {% if !t.assistant.is_empty() %}<div class="msg agent-msg"><span class="who">{% if agent == "claude" %}Claude{% else %}Codex{% endif %}</span><div class="text">{{ t.assistant|safe }}</div></div>{% endif %}
+  </article>
+  {% endfor %}
+</main>
+</div>
+</body>
+</html>
