@@ -44,7 +44,7 @@
     {% for c in chips %}<a class="{{ c.class }}" href="{{ c.href }}" title="{{ c.title }}">{{ c.label }}</a>{% endfor %}
   </div>
   <p class="dates">{{ started }} to {{ ended }}{% if !model.is_empty() %}, {{ model }}{% endif %}<br><span class="cwd">{{ cwd }}</span></p>
-  {% if let Some(s) = summary %}<p class="summary">{{ s }}</p>{% endif %}
+  {% if let Some(s) = summary %}<div class="summary">{{ s|safe }}</div>{% endif %}
   {% for t in turns %}
   <article class="turn{% if t.matched %} matched{% endif %}" id="t{{ t.idx }}">
     <div class="when">{{ t.when }}{% if let Some(b) = t.branch %} on {{ b }}{% endif %}</div>
