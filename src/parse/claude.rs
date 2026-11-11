@@ -1,14 +1,17 @@
 //! Claude Code sessions: `<claude_dir>/projects/<project>/<session>.jsonl`, and
 //! subagents in `<project>/<session>/subagents/agent-<id>.jsonl`.
 
-use crate::model::{clip_chars, clip_output, parse_ts, Fact, ParsedSession, ToolCall, Turn};
+use crate::model::{Fact, ParsedSession, ToolCall, Turn, clip_chars, clip_output, parse_ts};
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
 use std::sync::LazyLock;
 
 pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
-    let mut s = ParsedSession { source: "claude", ..Default::default() };
+    let mut s = ParsedSession {
+        source: "claude",
+        ..Default::default()
+    };
     let mut agent_id: Option<String> = None;
     let mut branch: Option<String> = None;
     let mut cwd: Option<String> = None;
@@ -25,9 +28,10 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
         };
         let ty = v["type"].as_str().unwrap_or("");
         if s.id.is_empty()
-            && let Some(id) = v["sessionId"].as_str() {
-                s.id = id.to_string();
-            }
+            && let Some(id) = v["sessionId"].as_str()
+        {
+            s.id = id.to_string();
+        }
         if agent_id.is_none() {
             agent_id = v["agentId"].as_str().map(String::from);
         }
@@ -37,7 +41,10 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
             }
             cwd = Some(c.to_string());
         }
-        if let Some(b) = v["gitBranch"].as_str().filter(|b| !b.is_empty() && *b != "HEAD") {
+        if let Some(b) = v["gitBranch"]
+            .as_str()
+            .filter(|b| !b.is_empty() && *b != "HEAD")
+        {
             branch = Some(b.to_string());
         }
         let ts = v["timestamp"].as_str().and_then(parse_ts);
@@ -48,7 +55,9 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
 
         match ty {
             "user" => {
-                if v["isMeta"].as_bool() == Some(true) || v["isCompactSummary"].as_bool() == Some(true) {
+                if v["isMeta"].as_bool() == Some(true)
+                    || v["isCompactSummary"].as_bool() == Some(true)
+                {
                     continue;
                 }
                 let content = &v["message"]["content"];
@@ -75,16 +84,32 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
                     _ => {}
                 }
                 if !prompt.is_empty() {
-                    s.turns.push(Turn { ts, user: prompt, branch: branch.clone(), cwd: cwd.clone(), ..Default::default() });
+                    s.turns.push(Turn {
+                        ts,
+                        user: prompt,
+                        branch: branch.clone(),
+                        cwd: cwd.clone(),
+                        ..Default::default()
+                    });
                 }
             }
             "assistant" => {
                 if s.model.is_none() {
-                    s.model = v["message"]["model"].as_str().filter(|m| !m.starts_with('<')).map(String::from);
+                    s.model = v["message"]["model"]
+                        .as_str()
+                        .filter(|m| !m.starts_with('<'))
+                        .map(String::from);
                 }
-                let Some(items) = v["message"]["content"].as_array() else { continue };
+                let Some(items) = v["message"]["content"].as_array() else {
+                    continue;
+                };
                 if s.turns.is_empty() {
-                    s.turns.push(Turn { ts, branch: branch.clone(), cwd: cwd.clone(), ..Default::default() });
+                    s.turns.push(Turn {
+                        ts,
+                        branch: branch.clone(),
+                        cwd: cwd.clone(),
+                        ..Default::default()
+                    });
                 }
                 let turn = s.turns.last_mut().unwrap();
                 if turn.branch.is_none() {
@@ -107,13 +132,20 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
                 }
             }
             "pr-link" => {
-                if let (Some(repo), Some(n)) = (v["prRepository"].as_str(), v["prNumber"].as_i64()) {
+                if let (Some(repo), Some(n)) = (v["prRepository"].as_str(), v["prNumber"].as_i64())
+                {
                     let key = format!("{}#{}", repo.to_lowercase(), n);
                     let f = Fact::new("pr", key, format!("{repo}#{n}"), "recorded", 3);
                     if !s.facts.contains(&f) {
                         s.facts.push(f);
                     }
-                    let r = Fact::new("repo", format!("github.com/{}", repo.to_lowercase()), repo, "recorded", 4);
+                    let r = Fact::new(
+                        "repo",
+                        format!("github.com/{}", repo.to_lowercase()),
+                        repo,
+                        "recorded",
+                        4,
+                    );
                     if !s.facts.contains(&r) {
                         s.facts.push(r);
                     }
@@ -135,7 +167,10 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
         title_named = title_named.or_else(|| subagent_name(path));
     }
     if s.id.is_empty() {
-        s.id = path.file_stem().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+        s.id = path
+            .file_stem()
+            .map(|x| x.to_string_lossy().into_owned())
+            .unwrap_or_default();
     }
     s.title = title_named.or(title_ai);
     s
@@ -144,7 +179,10 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
 fn subagent_name(path: &Path) -> Option<String> {
     let meta = path.with_extension("meta.json");
     let v: Value = serde_json::from_slice(&std::fs::read(meta).ok()?).ok()?;
-    v["description"].as_str().or(v["name"].as_str()).map(String::from)
+    v["description"]
+        .as_str()
+        .or(v["name"].as_str())
+        .map(String::from)
 }
 
 fn tool_call(it: &Value) -> ToolCall {
@@ -155,7 +193,11 @@ fn tool_call(it: &Value) -> ToolCall {
     let input = match name.as_str() {
         "Bash" => s("command"),
         "Edit" | "Write" | "Read" | "NotebookEdit" | "MultiEdit" => {
-            let p = if inp["file_path"].is_string() { s("file_path") } else { s("notebook_path") };
+            let p = if inp["file_path"].is_string() {
+                s("file_path")
+            } else {
+                s("notebook_path")
+            };
             if !p.is_empty() {
                 files.push(p.clone());
             }
@@ -168,21 +210,35 @@ fn tool_call(it: &Value) -> ToolCall {
         "Skill" => s("skill"),
         _ => clip_chars(&inp.to_string(), 600),
     };
-    ToolCall { id: it["id"].as_str().unwrap_or("").to_string(), name, input, files, ..Default::default() }
+    ToolCall {
+        id: it["id"].as_str().unwrap_or("").to_string(),
+        name,
+        input,
+        files,
+        ..Default::default()
+    }
 }
 
 fn attach_result(turns: &mut [Turn], it: &Value) {
     let id = it["tool_use_id"].as_str().unwrap_or("");
     let text = match &it["content"] {
         Value::String(t) => t.clone(),
-        Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|p| p["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => String::new(),
     };
     for turn in turns.iter_mut().rev().take(3) {
         if let Some(tc) = turn.tools.iter_mut().find(|t| t.id == id) {
             tc.is_error = it["is_error"].as_bool().unwrap_or(false);
             // File reads repeat file contents that are already on disk; keep less.
-            tc.output = if tc.name == "Read" { clip_output(&text, 5, 0) } else { clip_output(&text, 20, 20) };
+            tc.output = if tc.name == "Read" {
+                clip_output(&text, 5, 0)
+            } else {
+                clip_output(&text, 20, 20)
+            };
             return;
         }
     }
@@ -191,7 +247,9 @@ fn attach_result(turns: &mut [Turn], it: &Value) {
 static DROP_TAGS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?s)<(system-reminder|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr|task-notification|command-message)>.*?</(system-reminder|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr|task-notification|command-message)>").unwrap()
 });
-static KEEP_TAGS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"</?(command-name|command-args|bash-input|teammate-message)[^>]*>").unwrap());
+static KEEP_TAGS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"</?(command-name|command-args|bash-input|teammate-message)[^>]*>").unwrap()
+});
 
 /// Removes text Claude Code injects into user turns, keeping what the user typed.
 pub fn clean_user_text(t: &str) -> String {

@@ -115,13 +115,17 @@ impl Engine {
         let _g = self.refresh_lock.lock().unwrap();
         let mut c = self.conn()?;
         let stats = crate::ingest::Ingester::new(&self.cfg).run(&mut c, rebuild)?;
-        let n = self.lex.update(&mut c, self.cfg.search.boilerplate_min_sessions, rebuild)?;
+        let n = self
+            .lex
+            .update(&mut c, self.cfg.search.boilerplate_min_sessions, rebuild)?;
         if n > 0 || rebuild {
             *self.catalog.write().unwrap() = Arc::new(Catalog::load(&c)?);
         }
         if self.cfg.search.vectors && embed {
             match crate::models::embed_missing(&self.models, &c) {
-                Ok(e) if e > 0 || rebuild => *self.vecs.write().unwrap() = Arc::new(VecStore::load(&c)?),
+                Ok(e) if e > 0 || rebuild => {
+                    *self.vecs.write().unwrap() = Arc::new(VecStore::load(&c)?)
+                }
                 Ok(_) => {}
                 Err(e) => tracing::warn!("embedding failed, semantic search is limited: {e:#}"),
             }
@@ -135,15 +139,32 @@ impl Engine {
     }
 
     pub fn default_options(&self) -> Options {
-        Options { vectors: self.cfg.search.vectors, rerank: self.cfg.search.rerank }
+        Options {
+            vectors: self.cfg.search.vectors,
+            rerank: self.cfg.search.rerank,
+        }
     }
 
     /// Lexical-only results: the instant first stage.
     pub fn quick(&self, pq: &Parsed) -> Result<Results> {
-        self.run(pq, Options { vectors: false, rerank: false }, None, "keyword")
+        self.run(
+            pq,
+            Options {
+                vectors: false,
+                rerank: false,
+            },
+            None,
+            "keyword",
+        )
     }
 
-    pub fn run(&self, pq: &Parsed, opts: Options, rw: Option<&Rewrite>, stage: &'static str) -> Result<Results> {
+    pub fn run(
+        &self,
+        pq: &Parsed,
+        opts: Options,
+        rw: Option<&Rewrite>,
+        stage: &'static str,
+    ) -> Result<Results> {
         let t0 = Instant::now();
         let cat = self.catalog();
         let mut notes = vec![];
@@ -151,10 +172,27 @@ impl Engine {
 
         // Browsing: no text, only filters or entities.
         if pq.text.trim().is_empty() && pq.phrases.is_empty() {
-            let mut list: Vec<&SessionMeta> = cat.sessions.values().filter(|s| allowed(s)).collect();
+            let mut list: Vec<&SessionMeta> =
+                cat.sessions.values().filter(|s| allowed(s)).collect();
             list.sort_by_key(|s| -s.ended);
-            let hits = list.iter().take(100).map(|s| Hit { session: s.id.clone(), score: 0.0, reasons: vec![], turns: vec![], rerank: None }).collect();
-            return Ok(Results { hits, total: list.len(), stage, took_ms: t0.elapsed().as_millis(), ..Default::default() });
+            let hits = list
+                .iter()
+                .take(100)
+                .map(|s| Hit {
+                    session: s.id.clone(),
+                    score: 0.0,
+                    reasons: vec![],
+                    turns: vec![],
+                    rerank: None,
+                })
+                .collect();
+            return Ok(Results {
+                hits,
+                total: list.len(),
+                stage,
+                took_ms: t0.elapsed().as_millis(),
+                ..Default::default()
+            });
         }
 
         let limit = if pq.filters.is_empty() { 600 } else { 4000 };
@@ -170,7 +208,11 @@ impl Engine {
             let qv = self.models.embed_query(&pq.text);
             tracing::debug!("embedded query in {} ms", t.elapsed().as_millis());
             match qv {
-                Ok(qv) => lists.push((1.0, "semantic", aggregate_vec(&vecs, &vecs.search(&qv, limit), &cat, &allowed))),
+                Ok(qv) => lists.push((
+                    1.0,
+                    "semantic",
+                    aggregate_vec(&vecs, &vecs.search(&qv, limit), &cat, &allowed),
+                )),
                 Err(e) => notes.push(format!("semantic search unavailable: {e}")),
             }
         }
@@ -178,20 +220,36 @@ impl Engine {
             let text = rw.terms.join(" ");
             let lex = self.lex.search(&text, &[], limit, false)?;
             lists.push((0.5, "rewrite", aggregate_lex(&lex, &cat, &allowed)));
-            if opts.vectors && vecs.len() > 0
-                && let Ok(qv) = self.models.embed_query(&format!("{} {}", pq.text, text)) {
-                    lists.push((0.5, "rewrite", aggregate_vec(&vecs, &vecs.search(&qv, limit), &cat, &allowed)));
-                }
+            if opts.vectors
+                && vecs.len() > 0
+                && let Ok(qv) = self.models.embed_query(&format!("{} {}", pq.text, text))
+            {
+                lists.push((
+                    0.5,
+                    "rewrite",
+                    aggregate_vec(&vecs, &vecs.search(&qv, limit), &cat, &allowed),
+                ));
+            }
         }
 
         // Fuse.
         let mut fused: HashMap<String, Hit> = HashMap::new();
         for (w, name, list) in &lists {
             for (rank, (sid, agg)) in list.iter().enumerate() {
-                let h = fused.entry(sid.clone()).or_insert_with(|| Hit { session: sid.clone(), score: 0.0, reasons: vec![], turns: vec![], rerank: None });
+                let h = fused.entry(sid.clone()).or_insert_with(|| Hit {
+                    session: sid.clone(),
+                    score: 0.0,
+                    reasons: vec![],
+                    turns: vec![],
+                    rerank: None,
+                });
                 h.score += w / (RRF_K + rank as f32 + 1.0);
                 if rank < 20 {
-                    let reason = if *name == "keyword" && agg.card && agg.turns.is_empty() { "summary" } else { name };
+                    let reason = if *name == "keyword" && agg.card && agg.turns.is_empty() {
+                        "summary"
+                    } else {
+                        name
+                    };
                     if !h.reasons.iter().any(|r| r == reason) {
                         h.reasons.push(reason.to_string());
                     }
@@ -206,20 +264,46 @@ impl Engine {
         let unit = 1.0 / RRF_K;
         let now = chrono::Utc::now().timestamp();
         let rw_time = rw.and_then(|r| {
-            let s = r.since.as_deref().and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())?;
-            let u = r.until.as_deref().and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).unwrap_or(chrono::Local::now().date_naive());
-            Some((s.and_hms_opt(0, 0, 0)?.and_utc().timestamp() - 5 * 86_400, u.and_hms_opt(0, 0, 0)?.and_utc().timestamp() + 6 * 86_400))
+            let s = r
+                .since
+                .as_deref()
+                .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())?;
+            let u = r
+                .until
+                .as_deref()
+                .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                .unwrap_or(chrono::Local::now().date_naive());
+            Some((
+                s.and_hms_opt(0, 0, 0)?.and_utc().timestamp() - 5 * 86_400,
+                u.and_hms_opt(0, 0, 0)?.and_utc().timestamp() + 6 * 86_400,
+            ))
         });
         for h in fused.values_mut() {
-            let Some(s) = cat.sessions.get(&h.session) else { continue };
-            if s.kind.as_deref().is_some_and(|k| pq.kinds.contains(&k)) || rw.and_then(|r| r.kind.as_deref()).is_some_and(|k| s.kind.as_deref() == Some(k)) {
+            let Some(s) = cat.sessions.get(&h.session) else {
+                continue;
+            };
+            if s.kind.as_deref().is_some_and(|k| pq.kinds.contains(&k))
+                || rw
+                    .and_then(|r| r.kind.as_deref())
+                    .is_some_and(|k| s.kind.as_deref() == Some(k))
+            {
                 h.score += 0.3 * unit;
             }
-            if s.outcome.as_deref().is_some_and(|o| pq.outcomes.contains(&o)) || rw.and_then(|r| r.outcome.as_deref()).is_some_and(|o| s.outcome.as_deref() == Some(o)) {
+            if s.outcome
+                .as_deref()
+                .is_some_and(|o| pq.outcomes.contains(&o))
+                || rw
+                    .and_then(|r| r.outcome.as_deref())
+                    .is_some_and(|o| s.outcome.as_deref() == Some(o))
+            {
                 h.score += 0.3 * unit;
             }
-            let rw_repo = rw.and_then(|r| r.repo.as_deref()).and_then(|r| query::resolve_repo(&cat, r));
-            if s.repo_key.as_ref().is_some_and(|k| pq.repo_boost.contains(k) || rw_repo.as_deref() == Some(k.as_str())) {
+            let rw_repo = rw
+                .and_then(|r| r.repo.as_deref())
+                .and_then(|r| query::resolve_repo(&cat, r));
+            if s.repo_key.as_ref().is_some_and(|k| {
+                pq.repo_boost.contains(k) || rw_repo.as_deref() == Some(k.as_str())
+            }) {
                 h.score += 0.5 * unit;
                 h.reasons.push("repo".into());
             }
@@ -244,12 +328,26 @@ impl Engine {
         }
         for e in &pq.exact {
             for sid in &e.sessions {
-                let Some(s) = cat.sessions.get(sid) else { continue };
+                let Some(s) = cat.sessions.get(sid) else {
+                    continue;
+                };
                 if !allowed(s) {
                     continue;
                 }
-                let strength = cat.entities_of(sid, &e.kind).iter().filter(|x| e.keys.contains(&x.key.to_lowercase())).map(|x| x.strength).max().unwrap_or(1) as f32;
-                let h = fused.entry(sid.clone()).or_insert_with(|| Hit { session: sid.clone(), score: 0.0, reasons: vec![], turns: vec![], rerank: None });
+                let strength = cat
+                    .entities_of(sid, &e.kind)
+                    .iter()
+                    .filter(|x| e.keys.contains(&x.key.to_lowercase()))
+                    .map(|x| x.strength)
+                    .max()
+                    .unwrap_or(1) as f32;
+                let h = fused.entry(sid.clone()).or_insert_with(|| Hit {
+                    session: sid.clone(),
+                    score: 0.0,
+                    reasons: vec![],
+                    turns: vec![],
+                    rerank: None,
+                });
                 h.score += 10.0 + strength;
                 h.reasons.insert(0, format!("exact {} {}", e.kind, e.label));
             }
@@ -266,7 +364,15 @@ impl Engine {
             }
         }
         hits.truncate(100);
-        Ok(Results { hits, total, stage, took_ms: t0.elapsed().as_millis(), notes, rewrite: rw.cloned(), confidence })
+        Ok(Results {
+            hits,
+            total,
+            stage,
+            took_ms: t0.elapsed().as_millis(),
+            notes,
+            rewrite: rw.cloned(),
+            confidence,
+        })
     }
 
     /// Rescores the top fused sessions with the cross-encoder. Pinned exact
@@ -275,13 +381,20 @@ impl Engine {
     fn rerank(&self, pq: &Parsed, cat: &Catalog, hits: &mut Vec<Hit>) -> Result<Option<f32>> {
         let top = self.cfg.search.rerank_top.min(hits.len());
         let c = self.conn()?;
-        let ids: Vec<i64> = hits[..top].iter().flat_map(|h| h.turns.iter().take(2).copied()).collect();
+        let ids: Vec<i64> = hits[..top]
+            .iter()
+            .flat_map(|h| h.turns.iter().take(2).copied())
+            .collect();
         let texts = store::turn_texts(&c, &ids)?;
         let docs: Vec<String> = hits[..top]
             .iter()
             .map(|h| {
                 let s = &cat.sessions[&h.session];
-                let mut d = format!("{}\n{}\n", s.title, s.summary.as_deref().or(s.recap.as_deref()).unwrap_or(""));
+                let mut d = format!(
+                    "{}\n{}\n",
+                    s.title,
+                    s.summary.as_deref().or(s.recap.as_deref()).unwrap_or("")
+                );
                 for t in h.turns.iter().take(2) {
                     if let Some((_, u, a)) = texts.get(t) {
                         d.push_str(&crate::model::clip_chars(u, 350));
@@ -293,11 +406,24 @@ impl Engine {
                 crate::model::clip_chars(&d, 1600)
             })
             .collect();
-        let q = if pq.text.is_empty() { pq.raw.clone() } else { pq.text.clone() };
+        let q = if pq.text.is_empty() {
+            pq.raw.clone()
+        } else {
+            pq.text.clone()
+        };
         let t = Instant::now();
         let scores = self.models.rerank(&q, &docs)?;
-        tracing::debug!("reranked {} sessions in {} ms", docs.len(), t.elapsed().as_millis());
-        let max_fused = hits[..top].iter().filter(|h| h.score < 10.0).map(|h| h.score).fold(0.0f32, f32::max).max(1e-6);
+        tracing::debug!(
+            "reranked {} sessions in {} ms",
+            docs.len(),
+            t.elapsed().as_millis()
+        );
+        let max_fused = hits[..top]
+            .iter()
+            .filter(|h| h.score < 10.0)
+            .map(|h| h.score)
+            .fold(0.0f32, f32::max)
+            .max(1e-6);
         for (h, s) in hits[..top].iter_mut().zip(&scores) {
             let p = 1.0 / (1.0 + (-s).exp());
             h.rerank = Some(p);
@@ -306,7 +432,10 @@ impl Engine {
         }
         let mut head: Vec<Hit> = hits.drain(..top).collect();
         head.sort_by(|a, b| b.score.total_cmp(&a.score));
-        let confidence = head.iter().filter_map(|h| h.rerank).fold(None, |m: Option<f32>, p| Some(m.map_or(p, |m| m.max(p))));
+        let confidence = head
+            .iter()
+            .filter_map(|h| h.rerank)
+            .fold(None, |m: Option<f32>, p| Some(m.map_or(p, |m| m.max(p))));
         // Unreranked sessions keep their fused order below the reranked ones.
         for h in hits.iter_mut() {
             h.score = h.score.min(1.0) * 0.01;
@@ -333,7 +462,8 @@ impl Engine {
 
 fn passes(cat: &Catalog, s: &SessionMeta, f: &query::Filters) -> bool {
     if let Some(r) = &f.repo {
-        let ok = s.repo_key.as_deref() == Some(r.as_str()) || cat.repo_name(s).is_some_and(|n| n.eq_ignore_ascii_case(r));
+        let ok = s.repo_key.as_deref() == Some(r.as_str())
+            || cat.repo_name(s).is_some_and(|n| n.eq_ignore_ascii_case(r));
         if !ok {
             return false;
         }
@@ -342,10 +472,15 @@ fn passes(cat: &Catalog, s: &SessionMeta, f: &query::Filters) -> bool {
         return false;
     }
     if let Some(b) = &f.branch
-        && !cat.entities_of(&s.id, "branch").iter().any(|e| e.key == *b) {
-            return false;
-        }
-    if f.kind.as_ref().is_some_and(|k| s.kind.as_ref() != Some(k)) || f.outcome.as_ref().is_some_and(|o| s.outcome.as_ref() != Some(o)) {
+        && !cat.entities_of(&s.id, "branch").iter().any(|e| e.key == *b)
+    {
+        return false;
+    }
+    if f.kind.as_ref().is_some_and(|k| s.kind.as_ref() != Some(k))
+        || f.outcome
+            .as_ref()
+            .is_some_and(|o| s.outcome.as_ref() != Some(o))
+    {
         return false;
     }
     if f.since.is_some_and(|t| s.ended < t) || f.until.is_some_and(|t| s.started > t) {
@@ -379,7 +514,11 @@ fn add(map: &mut HashMap<String, Agg>, sid: &str, turn: Option<i64>, score: f32)
     }
 }
 
-fn aggregate_lex(hits: &[LexHit], cat: &Catalog, allowed: &dyn Fn(&SessionMeta) -> bool) -> Vec<(String, Agg)> {
+fn aggregate_lex(
+    hits: &[LexHit],
+    cat: &Catalog,
+    allowed: &dyn Fn(&SessionMeta) -> bool,
+) -> Vec<(String, Agg)> {
     let mut map = HashMap::new();
     for h in hits {
         if cat.sessions.get(&h.session).is_some_and(allowed) {
@@ -389,7 +528,12 @@ fn aggregate_lex(hits: &[LexHit], cat: &Catalog, allowed: &dyn Fn(&SessionMeta) 
     finish(map)
 }
 
-fn aggregate_vec(vs: &VecStore, hits: &[(usize, f32)], cat: &Catalog, allowed: &dyn Fn(&SessionMeta) -> bool) -> Vec<(String, Agg)> {
+fn aggregate_vec(
+    vs: &VecStore,
+    hits: &[(usize, f32)],
+    cat: &Catalog,
+    allowed: &dyn Fn(&SessionMeta) -> bool,
+) -> Vec<(String, Agg)> {
     let mut map = HashMap::new();
     for (i, score) in hits {
         let (sid, turn) = &vs.docs[*i];

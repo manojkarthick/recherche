@@ -3,7 +3,7 @@
 //! from it and can be rebuilt.
 
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -209,7 +209,15 @@ impl Catalog {
                 summary: r.get(7)?,
                 kind: r.get(8)?,
                 outcome: r.get(9)?,
-                tags: r.get::<_, Option<String>>(10)?.map(|t| t.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default(),
+                tags: r
+                    .get::<_, Option<String>>(10)?
+                    .map(|t| {
+                        t.split(',')
+                            .map(|x| x.trim().to_string())
+                            .filter(|x| !x.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 model: r.get(11)?,
                 started: r.get(12)?,
                 ended: r.get(13)?,
@@ -221,20 +229,35 @@ impl Catalog {
         for s in rows {
             let s = s?;
             if let Some(p) = &s.parent_id {
-                cat.children.entry(p.clone()).or_default().push(s.id.clone());
+                cat.children
+                    .entry(p.clone())
+                    .or_default()
+                    .push(s.id.clone());
             }
             cat.sessions.insert(s.id.clone(), s);
         }
         let mut st = c.prepare("SELECT session_id, kind, key, display, origin, strength FROM entities ORDER BY strength DESC")?;
         let rows = st.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, Entity { kind: r.get(1)?, key: r.get(2)?, display: r.get(3)?, origin: r.get(4)?, strength: r.get(5)? }))
+            Ok((
+                r.get::<_, String>(0)?,
+                Entity {
+                    kind: r.get(1)?,
+                    key: r.get(2)?,
+                    display: r.get(3)?,
+                    origin: r.get(4)?,
+                    strength: r.get(5)?,
+                },
+            ))
         })?;
         for row in rows {
             let (sid, e) = row?;
             if !cat.sessions.contains_key(&sid) {
                 continue;
             }
-            cat.by_entity.entry((e.kind.clone(), e.key.to_lowercase())).or_default().push(sid.clone());
+            cat.by_entity
+                .entry((e.kind.clone(), e.key.to_lowercase()))
+                .or_default()
+                .push(sid.clone());
             cat.entities.entry(sid).or_default().push(e);
         }
         for s in cat.sessions.values() {
@@ -246,11 +269,19 @@ impl Catalog {
     }
 
     pub fn repo_name(&self, s: &SessionMeta) -> Option<String> {
-        s.repo_key.as_ref().map(|k| self.repos.get(k).cloned().unwrap_or_else(|| crate::extract::repo_display(k)))
+        s.repo_key.as_ref().map(|k| {
+            self.repos
+                .get(k)
+                .cloned()
+                .unwrap_or_else(|| crate::extract::repo_display(k))
+        })
     }
 
     pub fn entities_of(&self, id: &str, kind: &str) -> Vec<&Entity> {
-        self.entities.get(id).map(|v| v.iter().filter(|e| e.kind == kind).collect()).unwrap_or_default()
+        self.entities
+            .get(id)
+            .map(|v| v.iter().filter(|e| e.kind == kind).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -267,16 +298,27 @@ pub struct TurnRow {
 pub fn turns(c: &Connection, session: &str) -> Result<Vec<TurnRow>> {
     let mut st = c.prepare("SELECT idx, ts, branch, user_text, assistant_text, tools_json FROM turns WHERE session_id = ? ORDER BY idx")?;
     let rows = st.query_map([session], |r| {
-        Ok(TurnRow { idx: r.get(0)?, ts: r.get(1)?, branch: r.get(2)?, user_text: r.get(3)?, assistant_text: r.get(4)?, tools_json: r.get(5)? })
+        Ok(TurnRow {
+            idx: r.get(0)?,
+            ts: r.get(1)?,
+            branch: r.get(2)?,
+            user_text: r.get(3)?,
+            assistant_text: r.get(4)?,
+            tools_json: r.get(5)?,
+        })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
 pub fn turn_texts(c: &Connection, ids: &[i64]) -> Result<HashMap<i64, (i64, String, String)>> {
     let mut out = HashMap::new();
-    let mut st = c.prepare_cached("SELECT idx, user_text, assistant_text FROM turns WHERE id = ?")?;
+    let mut st =
+        c.prepare_cached("SELECT idx, user_text, assistant_text FROM turns WHERE id = ?")?;
     for id in ids {
-        if let Some(row) = st.query_row([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()? {
+        if let Some(row) = st
+            .query_row([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?
+        {
             out.insert(*id, row);
         }
     }
@@ -284,20 +326,37 @@ pub fn turn_texts(c: &Connection, ids: &[i64]) -> Result<HashMap<i64, (i64, Stri
 }
 
 pub fn get_meta(c: &Connection, key: &str) -> Result<Option<String>> {
-    Ok(c.query_row("SELECT value FROM meta WHERE key = ?", [key], |r| r.get(0)).optional()?)
+    Ok(
+        c.query_row("SELECT value FROM meta WHERE key = ?", [key], |r| r.get(0))
+            .optional()?,
+    )
 }
 
 pub fn set_meta(c: &Connection, key: &str, value: &str) -> Result<()> {
-    c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", params![key, value])?;
+    c.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        params![key, value],
+    )?;
     Ok(())
 }
 
 pub fn month_spend(c: &Connection) -> Result<f64> {
     let start = crate::util::month_start();
-    Ok(c.query_row("SELECT COALESCE(SUM(usd), 0) FROM llm_usage WHERE ts >= ?", [start], |r| r.get(0))?)
+    Ok(c.query_row(
+        "SELECT COALESCE(SUM(usd), 0) FROM llm_usage WHERE ts >= ?",
+        [start],
+        |r| r.get(0),
+    )?)
 }
 
-pub fn record_usage(c: &Connection, purpose: &str, model: &str, input: i64, output: i64, usd: f64) -> Result<()> {
+pub fn record_usage(
+    c: &Connection,
+    purpose: &str,
+    model: &str,
+    input: i64,
+    output: i64,
+    usd: f64,
+) -> Result<()> {
     c.execute(
         "INSERT INTO llm_usage (ts, purpose, model, input_tokens, output_tokens, usd) VALUES (?, ?, ?, ?, ?, ?)",
         params![chrono::Utc::now().timestamp(), purpose, model, input, output, usd],

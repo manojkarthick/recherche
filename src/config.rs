@@ -85,7 +85,8 @@ impl Default for Config {
             ticket_patterns: vec![r"\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b".into()],
             ticket_stoplist: [
                 "UTF", "SHA", "ISO", "GPT", "RFC", "CVE", "HTTP", "TLS", "SSL", "AES", "MD", "X",
-                "LTS", "IPV", "PEP", "BGE", "CO", "UTC", "GMT", "PST", "PDT", "NODE", "PNPM", "NPM", "PR", "PY", "IOS", "MACOS", "PYTHON", "JAVA",
+                "LTS", "IPV", "PEP", "BGE", "CO", "UTC", "GMT", "PST", "PDT", "NODE", "PNPM",
+                "NPM", "PR", "PY", "IOS", "MACOS", "PYTHON", "JAVA",
             ]
             .map(String::from)
             .to_vec(),
@@ -101,7 +102,11 @@ impl Default for Config {
 
 impl Default for Sources {
     fn default() -> Self {
-        Self { claude_dir: None, codex_dir: None, poll_seconds: 30 }
+        Self {
+            claude_dir: None,
+            codex_dir: None,
+            poll_seconds: 30,
+        }
     }
 }
 
@@ -128,12 +133,21 @@ impl Default for Llm {
 
 impl Default for Search {
     fn default() -> Self {
-        Self { vectors: true, rerank: true, rerank_model: "jina-turbo".into(), rerank_top: 20, model_idle_seconds: 300, boilerplate_min_sessions: 4 }
+        Self {
+            vectors: true,
+            rerank: true,
+            rerank_model: "jina-turbo".into(),
+            rerank_top: 20,
+            model_idle_seconds: 300,
+            boilerplate_min_sessions: 4,
+        }
     }
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 fn xdg(var: &str, fallback: &str) -> PathBuf {
@@ -159,29 +173,39 @@ pub fn cache_dir() -> PathBuf {
 
 impl Config {
     pub fn load(path: Option<&Path>) -> Result<Self> {
-        let path = path.map(PathBuf::from).unwrap_or_else(|| config_dir().join("config.toml"));
+        let path = path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| config_dir().join("config.toml"));
         if !path.exists() {
             return Ok(Self::default());
         }
-        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 
     pub fn claude_dir(&self) -> PathBuf {
-        self.sources.claude_dir.clone().unwrap_or_else(|| match std::env::var_os("CLAUDE_CONFIG_DIR") {
-            Some(d) => PathBuf::from(d),
-            None => home().join(".claude"),
+        self.sources.claude_dir.clone().unwrap_or_else(|| {
+            match std::env::var_os("CLAUDE_CONFIG_DIR") {
+                Some(d) => PathBuf::from(d),
+                None => home().join(".claude"),
+            }
         })
     }
 
     pub fn codex_dir(&self) -> PathBuf {
-        self.sources.codex_dir.clone().unwrap_or_else(|| match std::env::var_os("CODEX_HOME") {
-            Some(d) => PathBuf::from(d),
-            None => home().join(".codex"),
-        })
+        self.sources
+            .codex_dir
+            .clone()
+            .unwrap_or_else(|| match std::env::var_os("CODEX_HOME") {
+                Some(d) => PathBuf::from(d),
+                None => home().join(".codex"),
+            })
     }
 
     pub fn is_loopback(&self) -> bool {
-        self.listen.starts_with("127.") || self.listen.starts_with("localhost") || self.listen.starts_with("[::1]")
+        self.listen.starts_with("127.")
+            || self.listen.starts_with("localhost")
+            || self.listen.starts_with("[::1]")
     }
 }
