@@ -71,20 +71,16 @@ enum Cmd {
     },
     /// Open the web UI, optionally with a query.
     Open { query: Vec<String> },
-    /// Summarize sessions with the LLM. Without --all, only sessions that
-    /// started after `serve` first ran.
+    /// Summarize finished sessions that have no summary yet or have grown
+    /// by half since their last one, however old they are.
     Summarize {
-        /// Include every existing session (the backfill).
-        #[arg(long)]
-        all: bool,
-        /// Regenerate existing summaries even when the session has not grown.
-        #[arg(long)]
-        force: bool,
+        /// Regenerate summaries even for sessions that already have one:
+        /// the N most recently ended sessions, or every session without N.
+        #[arg(long, value_name = "N", num_args = 0..=1)]
+        redo: Option<Option<usize>>,
         /// Show how many sessions and the estimated cost, then stop.
         #[arg(long)]
         dry_run: bool,
-        #[arg(long, default_value_t = 1000)]
-        limit: usize,
     },
     /// Score ranking configurations against your eval queries.
     Eval {
@@ -179,13 +175,16 @@ fn main() -> Result<()> {
                 println!("{url}");
             }
         }
-        Cmd::Summarize { all, force, dry_run, limit } => {
+        Cmd::Summarize { redo, dry_run } => {
+            let force = redo.is_some();
+            let limit = redo.flatten().unwrap_or(usize::MAX);
             let engine = search::Engine::open(cfg)?;
             if let Err(e) = engine.refresh(false) {
                 tracing::debug!("catch-up index skipped: {e:#}");
             }
             let c = engine.conn()?;
-            let cands = summarize::candidates(&c, &engine.cfg, all, force)?;
+            // Unlike the daemon, the CLI covers sessions from before `serve` first ran.
+            let cands = summarize::candidates(&c, &engine.cfg, true, force)?;
             let n = cands.len().min(limit);
             let est: f64 = cands.iter().take(limit).map(|x| engine.llm.estimate(x.digest.len() + 700, 300)).sum();
             println!(
@@ -200,7 +199,7 @@ fn main() -> Result<()> {
                 bail!("summaries are off: set {} and keep llm.summaries = true", engine.cfg.llm.api_key_env);
             }
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-            let done = rt.block_on(summarize::run(&engine.llm, &engine.cfg, &engine.db, all, force, limit, true))?;
+            let done = rt.block_on(summarize::run(&engine.llm, &engine.cfg, &engine.db, true, force, limit, true))?;
             engine.refresh(false)?;
             println!("Summarized {done} sessions. Spent ${:.2} this month.", store::month_spend(&c)?);
         }
