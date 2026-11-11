@@ -580,6 +580,38 @@ async fn stream(State(e): State<AppState>, Query(p): Query<Params>) -> Sse<impl 
 
 // ---- session page ----
 
+/// Parse Markdown before highlighting so marks never corrupt link destinations
+/// or Markdown delimiters. Raw HTML is displayed literally; the final allowlist
+/// also removes unsafe Markdown URLs and remote images from archived messages.
+fn markdown(text: &str, terms: &[String]) -> (String, usize) {
+    use pulldown_cmark::{html, Event, Options, Parser};
+    static SANITIZER: std::sync::LazyLock<ammonia::Builder<'static>> = std::sync::LazyLock::new(|| {
+        let mut builder = ammonia::Builder::default();
+        builder.add_tags(&["mark"]).rm_tags(&["img"]);
+        builder
+    });
+    if text.is_empty() {
+        return (String::new(), 0);
+    }
+    let mut hits = 0;
+    let events = Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH).map(|event| {
+        let (text, code) = match event {
+            Event::Text(t) | Event::Html(t) | Event::InlineHtml(t) => (t, false),
+            Event::Code(t) => (t, true),
+            other => return other,
+        };
+        let (mut rendered, n) = if terms.is_empty() { (esc(&text), 0) } else { highlight(&text, terms, None) };
+        hits += n;
+        if code {
+            rendered = format!("<code>{rendered}</code>");
+        }
+        Event::Html(rendered.into())
+    });
+    let mut html = String::with_capacity(text.len());
+    html::push_html(&mut html, events);
+    (SANITIZER.clean(&html).to_string(), hits)
+}
+
 pub struct ToolView {
     pub name: String,
     pub input: String,
@@ -640,8 +672,8 @@ async fn session_page(State(e): State<AppState>, AxPath(id): AxPath<String>, Que
         let mut matches = vec![];
         let mut turns = vec![];
         for t in crate::store::turns(&c, &id)? {
-            let (user, uh) = highlight(&t.user_text, &terms, None);
-            let (assistant, ah) = highlight(&t.assistant_text, &terms, None);
+            let (user, uh) = markdown(&t.user_text, &terms);
+            let (assistant, ah) = markdown(&t.assistant_text, &terms);
             let tools: Vec<ToolView> = serde_json::from_str::<Vec<serde_json::Value>>(&t.tools_json)
                 .unwrap_or_default()
                 .iter()
@@ -820,6 +852,39 @@ impl<E: Into<anyhow::Error>> From<E> for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcript_markdown_formats_text_and_preserves_search() {
+        let text = "# Ordering\n\nA **stable** [ordering guide](https://example.com/ordering?q=1&n=2).\n\n- first\n- second\n\n1. third\n2. fourth\n\n> quoted\n\n`ordering <tag>`\n\n```rust\nlet ordering = \"<script>\";\n```\n\n| Key | Value |\n| --- | --- |\n| ordering | stable |";
+        let (html, hits) = markdown(text, &highlight_terms("ordering", &[]));
+        assert_eq!(hits, 5, "{html}");
+        for expected in ["<h1><mark>Ordering</mark></h1>", "<strong>stable</strong>", "<ul>", "<ol>", "<blockquote>", "<table>", "<th>Key</th>", "<td><mark>ordering</mark></td>", "<code><mark>ordering</mark> &lt;tag&gt;</code>", "<pre><code>let <mark>ordering</mark> = \"&lt;script&gt;\";", "href=\"https://example.com/ordering?q=1&amp;n=2\""] {
+            assert!(html.contains(expected), "missing {expected}: {html}");
+        }
+        assert_eq!(markdown("", &[]), (String::new(), 0));
+    }
+
+    #[test]
+    fn transcript_markdown_cannot_inject_html_or_unsafe_urls() {
+        let text = r#"<script>alert(1)</script>
+
+<img src=x onerror=alert(2)><svg onload=alert(3)></svg>
+
+[bad](javascript:alert%281%29) [encoded](jav&#x61;script:alert%282%29)
+[data](data:text/html,boom) [vb](vbscript:msgbox)
+![tracking](https://example.com/tracker.png)
+[safe](https://example.com) [mail](mailto:hello@example.com)
+
+<iframe srcdoc="boom"></iframe>
+<a href="javascript:alert(4)">raw</a>"#;
+        let (html, _) = markdown(text, &[]);
+        for forbidden in ["<script", "<img", "<svg", "<iframe", "<a href=\"javascript:", "<a href=\"data:", "<a href=\"vbscript:"] {
+            assert!(!html.contains(forbidden), "found {forbidden}: {html}");
+        }
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"), "{html}");
+        assert!(html.contains("href=\"https://example.com\""), "{html}");
+        assert!(html.contains("href=\"mailto:hello@example.com\""), "{html}");
+    }
 
     #[test]
     fn highlight_marks_word_starts_and_escapes() {
