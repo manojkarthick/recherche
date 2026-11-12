@@ -30,7 +30,14 @@ struct Assets;
 type AppState = Arc<Engine>;
 
 pub async fn serve(engine: Arc<Engine>, listen: &str) -> Result<()> {
-    let app = Router::new()
+    let listener = tokio::net::TcpListener::bind(listen).await?;
+    tracing::info!("listening on http://{listen}");
+    axum::serve(listener, router(engine)).await?;
+    Ok(())
+}
+
+pub(crate) fn router(engine: Arc<Engine>) -> Router {
+    Router::new()
         .route("/", get(index))
         .route("/search", get(search_fragment))
         .route("/stream", get(stream))
@@ -38,12 +45,9 @@ pub async fn serve(engine: Arc<Engine>, listen: &str) -> Result<()> {
         .route("/e", get(entity_page))
         .route("/feedback", post(feedback))
         .route("/assets/{*path}", get(asset))
+        .nest("/api", crate::api::router())
         .layer(middleware::from_fn_with_state(engine.clone(), auth))
-        .with_state(engine);
-    let listener = tokio::net::TcpListener::bind(listen).await?;
-    tracing::info!("listening on http://{listen}");
-    axum::serve(listener, app).await?;
-    Ok(())
+        .with_state(engine)
 }
 
 /// Off loopback, every request needs the configured token: once as
@@ -135,7 +139,7 @@ impl Params {
     }
 
     /// The query with filters as operators, the form the parser reads.
-    fn full_query(&self) -> String {
+    pub(crate) fn full_query(&self) -> String {
         let mut q = self.q.clone();
         for (k, v) in self.filters() {
             if v.contains(' ') {
@@ -1236,20 +1240,7 @@ async fn entity_page(
 ) -> Result<Html<String>, AppError> {
     let html = tokio::task::spawn_blocking(move || -> Result<String> {
         let cat = e.catalog();
-        let mut ids: Vec<String> = if ep.kind == "repo" {
-            cat.sessions
-                .values()
-                .filter(|s| s.repo_key.as_deref() == Some(ep.key.as_str()))
-                .map(|s| s.id.clone())
-                .collect()
-        } else {
-            cat.by_entity
-                .get(&(ep.kind.clone(), ep.key.to_lowercase()))
-                .cloned()
-                .unwrap_or_default()
-        };
-        ids.sort_by_key(|id| -cat.sessions.get(id).map_or(0, |s| s.ended));
-        ids.dedup();
+        let ids = cat.entity_sessions(&ep.kind, &ep.key);
         let display = match ep.kind.as_str() {
             "repo" => crate::extract::repo_display(&ep.key),
             _ => cat

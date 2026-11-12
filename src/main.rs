@@ -1,3 +1,4 @@
+mod api;
 mod config;
 mod daemon;
 mod eval;
@@ -404,12 +405,18 @@ pub fn resume_command(s: &store::SessionMeta) -> String {
 /// The resume command without the `cd`, for showing the command and its
 /// directory on separate lines.
 pub fn agent_resume(s: &store::SessionMeta) -> String {
+    resume_argv(s).join(" ")
+}
+
+/// Claude subagents resume through their parent session.
+pub fn resume_argv(s: &store::SessionMeta) -> [&str; 3] {
     match s.source.as_str() {
-        "claude" => format!(
-            "claude --resume {}",
-            s.parent_id.as_deref().unwrap_or(&s.id)
-        ),
-        _ => format!("codex resume {}", s.id),
+        "claude" => [
+            "claude",
+            "--resume",
+            s.parent_id.as_deref().unwrap_or(&s.id),
+        ],
+        _ => ["codex", "resume", &s.id],
     }
 }
 

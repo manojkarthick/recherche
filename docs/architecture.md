@@ -178,6 +178,7 @@ For backup and retention guidance, see [local data](configuration.md#local-data-
 | [`src/query.rs`](../src/query.rs) and [`src/search.rs`](../src/search.rs) | Query interpretation, filtering, fusion, boosts, reranking |
 | [`src/llm.rs`](../src/llm.rs) and [`src/summarize.rs`](../src/summarize.rs) | API calls, rewrite cache, digest building, summary selection |
 | [`src/web.rs`](../src/web.rs), [`templates/`](../templates/), [`assets/`](../assets/) | HTTP routes, HTML views, result streams, embedded browser assets |
+| [`src/api.rs`](../src/api.rs) | JSON API for search, sessions, transcripts, and entity navigation; shares the server's engine and authentication |
 | [`src/eval.rs`](../src/eval.rs) | Labeled-query and feedback evaluation |
 
 For a first code walkthrough, follow `main.rs` → `search.rs` → `ingest.rs` for

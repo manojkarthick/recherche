@@ -278,6 +278,26 @@ impl Catalog {
         })
     }
 
+    /// Sessions associated with an entity, most recently active first. A repo
+    /// matches only sessions whose primary repo it is, not mere mentions.
+    pub fn entity_sessions(&self, kind: &str, key: &str) -> Vec<String> {
+        let mut ids: Vec<String> = if kind == "repo" {
+            self.sessions
+                .values()
+                .filter(|s| s.repo_key.as_deref() == Some(key))
+                .map(|s| s.id.clone())
+                .collect()
+        } else {
+            self.by_entity
+                .get(&(kind.to_owned(), key.to_lowercase()))
+                .cloned()
+                .unwrap_or_default()
+        };
+        ids.sort_by_key(|id| -self.sessions.get(id).map_or(0, |s| s.ended));
+        ids.dedup();
+        ids
+    }
+
     pub fn entities_of(&self, id: &str, kind: &str) -> Vec<&Entity> {
         self.entities
             .get(id)
