@@ -395,17 +395,21 @@ fn print_results(
 }
 
 pub fn resume_command(s: &store::SessionMeta) -> String {
-    let cd = s
-        .cwd
-        .as_deref()
-        .map(|c| format!("cd {} && ", util::shell_quote(c)))
-        .unwrap_or_default();
+    match &s.cwd {
+        Some(c) => format!("cd {} && {}", util::shell_quote(c), agent_resume(s)),
+        None => agent_resume(s),
+    }
+}
+
+/// The resume command without the `cd`, for showing the command and its
+/// directory on separate lines.
+pub fn agent_resume(s: &store::SessionMeta) -> String {
     match s.source.as_str() {
         "claude" => format!(
-            "{cd}claude --resume {}",
+            "claude --resume {}",
             s.parent_id.as_deref().unwrap_or(&s.id)
         ),
-        _ => format!("{cd}codex resume {}", s.id),
+        _ => format!("codex resume {}", s.id),
     }
 }
 
