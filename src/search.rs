@@ -79,7 +79,7 @@ impl Engine {
         Self::open_in(cfg, &crate::config::data_dir())
     }
 
-    fn open_in(cfg: Config, data: &Path) -> Result<Self> {
+    pub(crate) fn open_in(cfg: Config, data: &Path) -> Result<Self> {
         let db = data.join("recherche.db");
         let conn = store::open(&db)?;
         let lex = Lexical::open(&data.join("tantivy"))?;
