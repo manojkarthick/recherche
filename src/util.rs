@@ -19,6 +19,46 @@ pub fn fmt_date(ts: i64) -> String {
         .unwrap_or_default()
 }
 
+fn local(ts: i64) -> Option<chrono::DateTime<Local>> {
+    Local.timestamp_opt(ts, 0).single()
+}
+
+/// "Nov 9", with the year when it isn't this year.
+pub fn fmt_day(ts: i64) -> String {
+    use chrono::Datelike;
+    local(ts)
+        .map(|d| {
+            if d.year() == Local::now().year() {
+                d.format("%b %-d").to_string()
+            } else {
+                d.format("%b %-d, %Y").to_string()
+            }
+        })
+        .unwrap_or_default()
+}
+
+pub fn fmt_time(ts: i64) -> String {
+    local(ts)
+        .map(|d| d.format("%H:%M").to_string())
+        .unwrap_or_default()
+}
+
+pub fn fmt_duration(secs: i64) -> String {
+    let m = (secs.max(0) + 30) / 60;
+    match m {
+        0 => "under a minute".into(),
+        m if m < 60 => format!("{m} min"),
+        m if m < 60 * 24 => match m % 60 {
+            0 => format!("{} h", m / 60),
+            r => format!("{} h {r} min", m / 60),
+        },
+        m => match m / (60 * 24) {
+            1 => "1 day".into(),
+            d => format!("{d} days"),
+        },
+    }
+}
+
 pub fn fmt_ago(ts: i64) -> String {
     let secs = chrono::Utc::now().timestamp() - ts;
     match secs {

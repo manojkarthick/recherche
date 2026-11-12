@@ -1,4 +1,4 @@
-// Keyboard navigation and copy-to-clipboard. Everything else is htmx.
+// Keyboard navigation, copy-to-clipboard, votes and the turn index. Everything else is htmx.
 (() => {
   const results = () => [...document.querySelectorAll("#results .result")];
   let cur = -1;
@@ -24,9 +24,15 @@
       t.remove();
     }
     if (btn) {
-      const old = btn.textContent;
-      btn.textContent = "Copied";
-      setTimeout(() => (btn.textContent = old), 1200);
+      // Icon-only buttons say "Copied" in their label span; others swap their text.
+      const el = btn.querySelector(".lbl") || btn;
+      const old = el.textContent;
+      el.textContent = "Copied";
+      btn.classList.add("done");
+      setTimeout(() => {
+        el.textContent = old;
+        btn.classList.remove("done");
+      }, 1200);
     }
   }
 
@@ -37,6 +43,72 @@
       copy(b.dataset.copy, b);
     }
   });
+
+  // Show the vote once it's saved. The form stays visible after a vote, not only on hover.
+  document.addEventListener("htmx:afterRequest", (e) => {
+    const form = e.detail.elt;
+    const voted = e.detail.requestConfig?.triggeringEvent?.submitter;
+    if (!form.matches?.(".evals") || !e.detail.successful || !voted) return;
+    form.querySelectorAll(".btn").forEach((x) => x.setAttribute("aria-pressed", x === voted));
+    form.classList.remove("act");
+  });
+
+  // Mark the turn being read, in the transcript and in the turn index.
+  const turns = [...document.querySelectorAll(".turns > .t")];
+  if (turns.length) {
+    const links = new Map(
+      [...document.querySelectorAll(".toc a")].map((a) => [a.getAttribute("href").slice(1), a.parentElement]),
+    );
+    let here = null;
+    const mark = (t) => {
+      if (!t || t === here) return;
+      here?.classList.remove("here");
+      links.get(here?.id)?.classList.remove("here");
+      here = t;
+      t.classList.add("here");
+      const li = links.get(t.id);
+      if (li) {
+        li.classList.add("here");
+        li.scrollIntoView({ block: "nearest" });
+      }
+    };
+    // The turn being read is the last one whose top has passed the upper third
+    // of the window. Turns are in page order, so a binary search finds it.
+    const update = () => {
+      const line = innerHeight / 3;
+      let lo = 0;
+      let hi = turns.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (turns[mid].getBoundingClientRect().top <= line) lo = mid;
+        else hi = mid - 1;
+      }
+      mark(turns[lo]);
+    };
+    let queued = false;
+    addEventListener("scroll", () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        update();
+      });
+    }, { passive: true });
+    update();
+  }
+
+  // Back to top, once the header is out of view.
+  const top = document.querySelector(".totop");
+  if (top) {
+    const head = document.querySelector(".rh");
+    const show = () => (top.hidden = head.getBoundingClientRect().bottom > 0);
+    addEventListener("scroll", show, { passive: true });
+    show();
+    top.addEventListener("click", () => {
+      scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      top.blur();
+    });
+  }
 
   // A swap replaces the list; keep the selection on the same position.
   document.addEventListener("htmx:afterSwap", () => {
@@ -81,7 +153,7 @@
     } else if (e.key === "c") {
       const r = cur >= 0 ? results()[cur] : null;
       const resume = r ? r.dataset.resume : document.body.dataset.resume;
-      if (resume) copy(resume, (r || document).querySelector(".copy"));
+      if (resume) copy(resume, (r || document).querySelector(".copy, .cc"));
     }
   });
 })();
