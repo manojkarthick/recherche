@@ -1,4 +1,27 @@
 /target
-/.envrc
-/.direnv/
-!/.envrc.example
+
+# Local credentials and environment state; keep shareable templates tracked.
+.env
+.env.*
+.envrc
+.envrc.*
+.direnv/
+!.env.example
+!.envrc.example
+
+# Session exports, archives, indexes, and local evaluation/configuration.
+*.jsonl
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+/archive/
+/data/
+/tantivy/
+/sessions/
+/archived_sessions/
+/config.toml
+/eval.toml

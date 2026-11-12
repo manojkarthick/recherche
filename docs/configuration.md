@@ -217,6 +217,14 @@ SQLite can have accompanying WAL files while it is running. Preserve the
 database because it also contains archive tracking, generated summaries, and
 evaluation feedback. The model cache can be downloaded again.
 
+Keep real session exports, local configuration, evaluation queries, databases,
+logs, and backups outside this repository. The ignore rules cover common local
+artifacts, but cannot redact content pasted into source files or documentation.
+Use invented prompts, paths, repository names, and session IDs in examples,
+fixtures, screenshots, and PR descriptions. Check commit messages and PR bodies
+for private session links before publishing; deleting a file or editing the
+latest version does not remove earlier copies from Git history.
+
 `recherche index --rebuild` reparses archives tracked in the database and
 rebuilds keyword documents, including for sessions whose originals no longer
 exist. It does not reconstruct a missing database from an untracked archive

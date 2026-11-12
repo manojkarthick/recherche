@@ -1,4 +1,4 @@
 # Copy to .envrc and replace ENVIRONMENT_ID with your 1Password Environment ID.
 # Store OPENROUTER_API_KEY in that Environment (or the llm.api_key_env name).
 # Keep the real ID and secret values out of this example. Then run direnv allow.
-eval "$(direnv dotenv bash <(op environment read ENVIRONMENT_ID))"
+eval "$(direnv dotenv bash <(op environment secret list ENVIRONMENT_ID --reveal --format=dotenv))"
