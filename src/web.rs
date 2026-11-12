@@ -1111,7 +1111,7 @@ async fn session_page(
                 "commit" => "Commits",
                 "worktree" => "Directories",
                 "repo" => "Repos mentioned",
-                "file" => "Files",
+                // File entities are still extracted for search, but listing them here is mostly noise.
                 _ => continue,
             };
             let how = match (en.kind.as_str(), en.strength) {
@@ -1124,7 +1124,7 @@ async fn session_page(
                 _ => String::new(),
             };
             let href = match en.kind.as_str() {
-                "worktree" | "file" | "commit" => String::new(),
+                "worktree" | "commit" => String::new(),
                 k => format!("/e?kind={k}&key={}", enc(&en.key.to_lowercase())),
             };
             let github = github_url(&en.kind, &en.key, s.repo_key.as_deref()).unwrap_or_default();
@@ -1139,14 +1139,13 @@ async fn session_page(
             "Branches",
             "Commits",
             "Directories",
-            "Files",
             "Repos mentioned",
         ];
         let entities = order
             .iter()
             .filter_map(|n| {
                 groups.remove(n).map(|mut items| {
-                    items.truncate(if *n == "Files" { 30 } else { 15 });
+                    items.truncate(15);
                     EntityGroup { name: n, items }
                 })
             })
