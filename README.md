@@ -1,137 +1,150 @@
 # recherche
 
-Search your past Claude Code and Codex sessions by what you remember: a few words, a ticket, a PR, a branch, or a sentence like "the thread where we fixed the ordering issue".
+Search your past Claude Code and Codex sessions by what you remember: a few
+words, a ticket, a pull request, a branch, or a sentence like “the thread where
+we fixed the ordering issue.”
 
-It runs on your machine as one binary. It imports every session, keeps its own copy of the files (Claude Code deletes old sessions), and indexes new ones as you work. Repos, branches, worktrees, PRs, tickets and agents are recovered from the session files alone, so sessions in deleted worktrees stay searchable.
+recherche runs on your machine as one Rust binary, with a browser UI and a
+command-line interface. It reads the session files your agents already write,
+keeps a local archive, and combines keyword search with local models that find
+similar meaning. No API key is needed for that workflow.
 
-## Use
+## What you can do
+
+- Find work across Claude Code and Codex without remembering which agent you used.
+- Search by prompts, replies, commands, errors, files, tickets, PRs, or branches.
+- Read a transcript, follow related sessions, and copy a command to resume it.
+- Keep imported sessions searchable after their original files or worktrees disappear.
+- Optionally add generated titles, summaries, and query expansion through an
+  LLM API.
+
+This is a personal session search tool. Repository and PR information comes
+from recorded sessions; recherche does not crawl your repositories or fetch
+their current state from GitHub. An archived transcript remains readable even
+when its working directory is gone, but resuming still depends on the original
+agent and its session data.
+
+## Get started
+
+You need a recent stable Rust toolchain and native build tools: Xcode Command
+Line Tools on macOS, or a C/C++ build toolchain on Linux. Service installation
+supports macOS and Linux; the ingestion code uses Unix filesystem APIs.
+
+From a checkout of this repository:
 
 ```sh
-cargo build --release
-./target/release/recherche serve          # indexes, then serves http://127.0.0.1:7777
+cargo install --path . --locked
+recherche serve
 ```
 
-The first run imports everything and downloads two small local models (an embedder and a reranker, about 300 MB) into `$XDG_CACHE_HOME/recherche/models`.
-
-In the web UI, type what you remember. Keyword results appear while you type; results ranked by meaning replace them a moment later. Press `/` to search, `j`/`k` to move, `Enter` to open, `c` to copy the resume command. "This was it" on a result adds it to your eval set.
-
-You can also put filters in the query: `repo:dotfiles agent:codex since:30d branch:fix-login kind:bugfix outcome:fixed`. Phrases like "last week" or "in March" boost sessions from that time, and "in <repo>" filters to that repo.
-
-Other commands:
-
-| Command | What it does |
-| --- | --- |
-| `recherche search "<query>"` | The same search from the terminal; `--json` for scripts |
-| `recherche list [--limit N] [--since PERIOD] [--json]` | Lists sessions newest activity first; defaults to 10 sessions of any age; `--json` for scripts |
-| `recherche open "<query>"` | Opens the web UI with that query |
-| `recherche index [--rebuild]` | One import pass; `--rebuild` reparses everything from the archive |
-| `recherche summarize [--redo [N]] [--dry-run]` | Summarizes sessions that need it; `--redo` regenerates existing summaries; `--dry-run` shows the count and estimated cost |
-| `recherche eval [-v] [--rewrite]` | Scores ranking configurations against your eval queries |
-| `recherche install-service` | Writes a launchd agent (macOS) or systemd user unit (Linux) for `serve` |
-| `recherche doctor` | Paths, counts and unparsed lines |
-
-Use `recherche list --limit 25 --since 7d` to show up to 25 sessions active in
-the last seven days. `--since` accepts a local date (`YYYY-MM-DD`, from midnight)
-or a duration ending in `d`, `w`, `m` or `y`; months mean 30 days and years mean
-365 days, as in search. Each entry shows the last activity date, agent, repo,
-title and resume command. Listing catches up new session data without running
-embedding models.
-
-Add `--json` for a JSON array with `id`, `agent`, `title`, `repo`, `cwd`,
-`started`, `ended` and `resume` fields. Timestamps are Unix seconds; missing
-repos and working directories are `null`. JSON preserves full titles and repo
-names and uses the same ordering, limit and time filter as the text output.
-An empty list prints `[]`. The session count and logs go to stderr.
-
-## LLM features (optional)
-
-With `OPENROUTER_API_KEY` set, two features call a model through [OpenRouter](https://openrouter.ai), DeepSeek V4.1 Flash by default:
-
-- **Query rewrite**: for sentence-like queries whose top results score weakly, the query is expanded into terms the transcript may have used ("history tables" becomes "audit table, SCD2, temporal table"). The refined results stream in after the first ones; the reranker still scores against your own words.
-- **Session summaries**: a title, a short summary, a kind and an outcome for each finished session, written from a capped digest of the session rather than the whole transcript. While `serve` runs, sessions that started after it first ran are summarized once they go idle. Run `recherche summarize` once for the backlog: it summarizes every finished session that has no summary yet or has grown by half since its last one, however old.
-
-To regenerate summaries that already exist, run `recherche summarize --redo 5` for the 5 sessions with the most recent activity, or `recherche summarize --redo` for all of them. `--redo` bypasses the inactivity window and growth check, so it also includes sessions still in progress and sessions without a summary. Excluded sources and paths are still respected. Add `--dry-run` to any of these to see the count and estimated cost first. You can leave `serve` running: it picks up summaries and search index changes on its next refresh (normally within 30 seconds). Reload the page to see them.
-
-Any OpenRouter model works: set `llm.model`, and `llm.rewrite_model` to use a different (faster) model for rewrite. Any other OpenAI-compatible API works too through `llm.base_url`.
-
-recherche doesn't track or cap spend; set a credit limit on your OpenRouter API key instead. If the API rejects a call, LLM features fail and search keeps working. Requests ask OpenRouter to use only hosts that don't store or train on prompts (`llm.deny_data_collection`). Both Claude Code and Codex sessions are summarized by default; use `llm.summarize_sources` to limit this to one agent, and `llm.summarize_exclude_paths` to keep directories such as work repos out.
-
-Search itself never calls an API: the embedder and reranker run locally.
-
-### Load the API key with direnv and 1Password
-
-Recherche reads the key from `OPENROUTER_API_KEY` by default. Set
-`llm.api_key_env` in your config to use a different environment variable; the
-config stores the variable's name, not the secret. Recherche does not read
-`.envrc` itself.
-
-With [direnv](https://direnv.net) installed and its hook enabled in your shell,
-and the [1Password CLI](https://developer.1password.com/docs/cli/) installed and
-signed in:
-
-1. Create a **1Password Environment** containing `OPENROUTER_API_KEY` (or the
-   variable named by `llm.api_key_env`). Store the secret there, not in a regular
-   vault item or as a plain value in `.envrc`.
-2. Copy `.envrc.example` to `.envrc` and replace `ENVIRONMENT_ID` with your
-   Environment's ID. Keep the real ID only in this gitignored file, not in the
-   tracked example.
-3. Run `direnv allow` in this checkout after editing `.envrc` and approve any
-   1Password prompt. Direnv loads the Environment using:
-
-   ```bash
-   eval "$(direnv dotenv bash <(op environment read ENVIRONMENT_ID))"
-   ```
-
-Then run commands normally, without an `op run` wrapper:
+Cargo installs the binary into `~/.cargo/bin` by default; make sure that directory
+is on your `PATH`. To run directly from the checkout instead:
 
 ```sh
+cargo build --release --locked
 ./target/release/recherche serve
 ```
 
-The local `.envrc` and direnv's `.direnv/` directory are gitignored; only the
-secret-free template is tracked. Direnv loads the key when you enter this
-checkout and removes it from the shell environment when you leave. After
-rotating the key, run `direnv reload` and restart recherche so it inherits the
-new value. Do not print the key or enable shell tracing while loading it.
+Open <http://127.0.0.1:7777>. No configuration file is required. By default,
+recherche imports JSONL session files from:
 
-Scripts and Makefiles should only consume the exported variables and fail with
-a clear message when a required variable is missing. They should not call `op`
-or read `.envrc`. Recherche itself keeps LLM features optional: without the key,
-local search still works.
+| Agent | Locations |
+| --- | --- |
+| Claude Code | `~/.claude/projects/`, including subagent sessions |
+| Codex | `~/.codex/sessions/` and `~/.codex/archived_sessions/` |
 
-### Background processes and services
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME`, or explicit source settings, can change
+these roots. See [configuration](docs/configuration.md).
 
-`recherche serve` started from the direnv-enabled shell inherits the key, even
-if you put it in the background. Leaving the directory does not remove the
-key from an already-running process. A command launched elsewhere does not
-automatically load this checkout's `.envrc`.
+The server starts an initial import in the background and keeps watching for
+changes. Keyword results become available before embedding finishes. Local
+models download on first use into `~/.cache/recherche/models/` by default;
+allow network access for those downloads and extra time for the initial import.
+Once the models are cached, local search can run offline.
 
-The launchd agent or systemd user unit generated by `recherche install-service`
-starts the binary directly, without direnv or your interactive shell's
-environment. Running `install-service` from a direnv-enabled shell does not
-copy the key into the service. LLM features therefore remain off unless you
-configure the service's environment separately. To use this `.envrc` with a
-service, its launch command would need to run
-`/absolute/path/to/direnv exec /absolute/path/to/recherche /absolute/path/to/recherche-binary serve`
-instead. That also requires access to `op` and an authorized 1Password session
-at service startup; desktop biometric approval may not be available during
-unattended startup. This setup does not provide unattended service credentials.
+## Try a search
 
-## Config
+In the browser, enter a sentence, an identifier, or a query with filters:
 
-`$XDG_CONFIG_HOME/recherche/config.toml`; every key is optional. See [config.example.toml](config.example.toml).
-
-Data lives in `$XDG_DATA_HOME/recherche` (`RECHERCHE_DATA_DIR` overrides it): the session archive, SQLite and the search index. The index can always be rebuilt from the archive.
-
-## Eval
-
-Ranking changes should be measured. Put real queries in `$XDG_CONFIG_HOME/recherche/eval.toml`, mostly in the conversational form you actually type:
-
-```toml
-[[query]]
-q = "the thread where we fixed the ordering issue"
-class = "conversational"   # or exact, entity, temporal
-expect = ["<session id>"]
+```text
+the thread where we fixed the ordering issue
+PROJ-123
+repo:example agent:codex since:30d
+branch:fix-login kind:bugfix outcome:fixed
 ```
 
-`recherche eval` reports recall@5, recall@10 and MRR per class for keyword only, keyword plus vectors, and with the reranker (`--rewrite` adds the LLM rewrite). Results you mark with "This was it" are included as the `feedback` class.
+Keyword results appear first. Semantic retrieval and a local reranker then
+update their order. `kind` and `outcome` filters require generated session
+summaries. Open a result to read the conversation and inspect its recorded
+commands and related entities.
+
+Press `/` to focus search, `j`/`k` to select a result, `Enter` to open it, and
+`c` to copy its resume command. The browser copies the command for you to run
+in a terminal.
+
+The same archive is available from the CLI:
+
+```sh
+recherche search "the thread where we fixed the ordering issue"
+recherche search "PROJ-123" --json
+recherche list --limit 25 --since 7d
+```
+
+See the [usage guide](docs/usage.md) for all commands, query syntax, and ranking
+evaluation.
+
+## Data and optional API features
+
+The archive, database, and keyword index live under
+`~/.local/share/recherche/` by default, including on macOS. Importing copies
+session files; it does not move or delete the originals. Deleting an original
+session does not remove recherche's archived copy.
+
+Keyword search, embeddings, and reranking run locally. With an API key present,
+the default configuration also enables two optional API features:
+
+| Feature | Data sent to the configured API |
+| --- | --- |
+| Query expansion | Your query and a list of known repository names |
+| Session summaries | A capped digest containing prompts, metadata, selected errors, and the final reply |
+
+The default API is OpenRouter. Query expansion can run automatically for
+sentence-like browser searches with weak results; CLI searches require
+`--rewrite`. Automatic summaries cover eligible sessions started after the first
+`serve` run. Summarizing older sessions requires `recherche summarize`.
+
+To explicitly disable both API features, add this to your config:
+
+```toml
+[llm]
+enabled = false
+```
+
+See [configuration and API setup](docs/configuration.md) for paths, credentials,
+source exclusions, service setup, and the data retained locally.
+
+## Documentation
+
+| Guide | What it explains |
+| --- | --- |
+| [Usage](docs/usage.md) | Search syntax, browser controls, CLI commands, summaries, and evaluation |
+| [Configuration and operation](docs/configuration.md) | File locations, settings, optional API calls, background services, and troubleshooting |
+| [Architecture](docs/architecture.md) | Architecture diagram, import and search flows, storage, and source-code map |
+| [Example configuration](config.example.toml) | Copyable settings with defaults |
+
+## Development
+
+The UI templates and static assets are embedded in the binary. There is no
+separate frontend build or database server to start. Rebuild the binary after
+changing templates or assets.
+
+CI runs these checks:
+
+```sh
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+```
+
+Tests do not require session data, model downloads, or an API key. Building the
+dependencies can still require network access, including for ONNX Runtime.
