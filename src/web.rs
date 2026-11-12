@@ -4,7 +4,7 @@
 
 use crate::search::{Engine, Hit, Results};
 use crate::store::{Catalog, SessionMeta};
-use crate::util::{fmt_ago, fmt_date};
+use crate::util::{fmt_ago, fmt_date, fmt_day, fmt_duration, fmt_time};
 use anyhow::Result;
 use askama::Template;
 use axum::extract::{Path as AxPath, Query, Request, State};
@@ -216,6 +216,8 @@ pub struct Chip {
     pub title: String,
     /// The matching GitHub page, shown on the session page as an external link.
     pub github: Option<String>,
+    /// The search matched on this ref.
+    pub hit: bool,
 }
 
 /// The GitHub page for a PR, repo or branch entity key. A branch needs the
@@ -254,7 +256,10 @@ pub struct ResultView {
     pub when: String,
     pub blurb: Option<String>,
     pub snippets: Vec<String>,
-    pub reasons: Vec<String>,
+    /// The date is one of the reasons it matched.
+    pub time_hit: bool,
+    /// Reasons with nothing on the result to highlight, shown in the margin.
+    pub notes: Vec<String>,
     pub resume: String,
     pub cwd_gone: bool,
     pub session_id: String,
@@ -262,6 +267,8 @@ pub struct ResultView {
 
 pub struct FacetItem {
     pub label: String,
+    /// The full name, when the label is shortened.
+    pub title: String,
     pub count: usize,
     pub href: String,
     pub active: bool,
@@ -313,6 +320,7 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
                 "Repo".into()
             },
             github: github_url("repo", k, None),
+            hit: false,
         });
     }
     let branches = cat.entities_of(&s.id, "branch");
@@ -327,6 +335,7 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             class: "chip branch",
             title: "Branch".into(),
             github: github_url("branch", &b.key, s.repo_key.as_deref()),
+            hit: false,
         });
     }
     let mut prs = cat.entities_of(&s.id, "pr");
@@ -349,6 +358,7 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             class: "chip pr",
             title: format!("{verb}: {}", p.display),
             github: github_url("pr", &p.key, None),
+            hit: false,
         });
     }
     for t in cat.entities_of(&s.id, "ticket").iter().take(3) {
@@ -358,6 +368,7 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             class: "chip ticket",
             title: "Ticket".into(),
             github: None,
+            hit: false,
         });
     }
     chips
@@ -445,16 +456,59 @@ pub fn highlight(text: &str, terms: &[String], window: Option<usize>) -> (String
     (out, hits)
 }
 
-fn reason_label(r: &str) -> String {
-    match r {
-        "keyword" => "words".into(),
-        "semantic" => "meaning".into(),
-        "summary" => "summary".into(),
-        "rewrite" => "related terms".into(),
-        "repo" => "repo".into(),
-        "time" => "date".into(),
-        other => other.to_string(),
+/// Shows each match reason where it applies: a highlight on the matching ref
+/// or the date, or a margin note when the result has nothing to point at.
+/// Matched words are already marked in the summary and snippets. Returns
+/// whether the date matched, and the notes.
+fn place_reasons(reasons: &[String], chips: &mut [Chip]) -> (bool, Vec<String>) {
+    let words = reasons.iter().any(|r| r == "keyword" || r == "summary");
+    let mut time_hit = false;
+    let mut notes: Vec<String> = vec![];
+    for r in reasons {
+        let (kind, label) = match r.as_str() {
+            "keyword" | "summary" => continue,
+            "semantic" => {
+                if !words {
+                    notes.push("similar meaning".into());
+                }
+                continue;
+            }
+            "rewrite" => {
+                notes.push("related terms".into());
+                continue;
+            }
+            "time" => {
+                time_hit = true;
+                continue;
+            }
+            "repo" => ("repo", ""),
+            // "branch X" from a branch boost, "exact KIND LABEL" from an exact entity.
+            other => other
+                .strip_prefix("exact ")
+                .unwrap_or(other)
+                .split_once(' ')
+                .unwrap_or((other, "")),
+        };
+        // PR labels are "PR #12" or "owner/repo#12" depending on context.
+        let num = |l: &str| l.rsplit_once('#').map(|(_, n)| n.to_string());
+        let found = chips.iter_mut().find(|c| {
+            c.class.split(' ').nth(1) == Some(kind)
+                && match kind {
+                    "repo" => true,
+                    "pr" => num(&c.label).is_some() && num(&c.label) == num(label),
+                    _ => c.label.eq_ignore_ascii_case(label),
+                }
+        });
+        match found {
+            Some(c) => c.hit = true,
+            None if matches!(kind, "pr" | "ticket") || label.is_empty() => {
+                notes.push(if label.is_empty() { kind } else { label }.to_string())
+            }
+            None => notes.push(format!("{kind} {label}")),
+        }
     }
+    notes.dedup();
+    (time_hit, notes)
 }
 
 /// Renders new bullet summaries while keeping existing prose summaries readable.
@@ -518,6 +572,8 @@ fn result_view(
         .and_then(|t| texts.get(t))
         .map(|(idx, _, _)| format!("#t{idx}"))
         .unwrap_or_default();
+    let mut chips = chips_for(cat, s);
+    let (time_hit, notes) = place_reasons(&h.reasons, &mut chips);
     Some(ResultView {
         href: format!("/s/{}{qs}{anchor}", s.id),
         title: if s.title.is_empty() {
@@ -527,12 +583,13 @@ fn result_view(
         },
         agent: s.source.clone(),
         is_sub: s.parent_id.is_some(),
-        chips: chips_for(cat, s),
+        chips,
         ago: fmt_ago(s.ended),
         when: fmt_date(s.ended),
         blurb,
         snippets,
-        reasons: h.reasons.iter().map(|r| reason_label(r)).collect(),
+        time_hit,
+        notes,
         resume: crate::resume_command(s),
         cwd_gone: s
             .cwd
@@ -583,6 +640,7 @@ fn facets(cat: &Catalog, p: &Params, hits: &[Hit]) -> Vec<FacetGroup> {
     let active = |k: &str, v: &str| p.filters().iter().any(|(fk, fv)| *fk == k && *fv == v);
     let item = |k: &str, v: &str, label: String, count: usize| FacetItem {
         label,
+        title: String::new(),
         count,
         href: p.url("/", Some((k, v))),
         active: active(k, v),
@@ -602,12 +660,24 @@ fn facets(cat: &Catalog, p: &Params, hits: &[Hit]) -> Vec<FacetGroup> {
             .map(|(k, n)| item("agent", &k, agent_name(&k).to_string(), n))
             .collect(),
     );
-    push(
-        "Repo",
+    push("Repo", {
+        // The column is narrow, so show the repo name without its owner,
+        // unless two owners have a repo with the same name.
+        let short = |n: &str| n.rsplit_once('/').map_or(n, |(_, r)| r).to_string();
+        let names: Vec<String> = repo.values().map(|(n, _)| short(n)).collect();
         repo.into_iter()
-            .map(|(k, (name, n))| item("repo", &k, name, n))
-            .collect(),
-    );
+            .map(|(k, (name, n))| {
+                let s = short(&name);
+                if s == name || names.iter().filter(|x| **x == s).count() > 1 {
+                    return item("repo", &k, name, n);
+                }
+                FacetItem {
+                    title: name,
+                    ..item("repo", &k, s, n)
+                }
+            })
+            .collect()
+    });
     push(
         "When",
         [("7d", "Last 7 days", week), ("30d", "Last 30 days", month)]
@@ -638,6 +708,8 @@ fn render_results(
     res: &Results,
     stream: bool,
     refining: bool,
+    // The entity page leaves its own ref off each result; the heading names it.
+    hide_ref: Option<&str>,
 ) -> Result<String> {
     let cat = e.catalog();
     let c = e.conn()?;
@@ -654,11 +726,17 @@ fn render_results(
         .map(|r| r.terms.clone())
         .unwrap_or_default();
     let terms = highlight_terms(&pq.text, &extra);
-    let results: Vec<ResultView> = shown
+    let mut results: Vec<ResultView> = shown
         .iter()
         .filter_map(|h| result_view(&cat, h, &texts, &terms, &p.q))
         .collect();
+    if let Some(href) = hide_ref {
+        for r in &mut results {
+            r.chips.retain(|c| c.href != href);
+        }
+    }
     let status = match res.stage {
+        "entity" => "Newest first".into(),
         _ if p.is_empty() => format!("{} most recent sessions", results.len()),
         "keyword" => format!(
             "{} sessions with matching words. Ranking by meaning…",
@@ -722,7 +800,7 @@ fn recent(e: &Engine) -> Results {
 /// The instant first stage, plus the SSE hookup for the later stages.
 fn first_stage(e: &Engine, p: &Params) -> Result<String> {
     if p.is_empty() {
-        return render_results(e, p, &recent(e), false, false);
+        return render_results(e, p, &recent(e), false, false, None);
     }
     let pq = e.parse(&p.full_query());
     let res = e.quick(&pq)?;
@@ -734,6 +812,7 @@ fn first_stage(e: &Engine, p: &Params) -> Result<String> {
         &res,
         more && !res.hits.is_empty(),
         more && !res.hits.is_empty(),
+        None,
     )
 }
 
@@ -764,6 +843,7 @@ async fn index(
                 class: "chip active",
                 title: "Remove filter".into(),
                 github: None,
+                hit: false,
             }
         })
         .collect();
@@ -823,14 +903,14 @@ async fn stream(
             return;
         };
         let wants = e.wants_rewrite(&pq, &res);
-        send(render_results(&e, &p, &res, false, wants)).await;
+        send(render_results(&e, &p, &res, false, wants, None)).await;
         if wants {
             match tokio::time::timeout(Duration::from_secs(5), e.rewrite(&pq)).await {
                 Ok(Ok(rw)) if !rw.terms.is_empty() => {
                     let (e2, p2) = (e.clone(), p.clone());
                     let html = tokio::task::spawn_blocking(move || -> Result<String> {
                         let res = e2.run(&pq, e2.default_options(), Some(&rw), "refined")?;
-                        render_results(&e2, &p2, &res, false, false)
+                        render_results(&e2, &p2, &res, false, false, None)
                     })
                     .await
                     .unwrap_or_else(|j| Err(j.into()));
@@ -840,7 +920,7 @@ async fn stream(
                     if let Ok(Err(err)) = other {
                         tracing::warn!("rewrite skipped: {err:#}");
                     }
-                    send(render_results(&e, &p, &res, false, false)).await;
+                    send(render_results(&e, &p, &res, false, false, None)).await;
                 }
             }
         }
@@ -903,10 +983,16 @@ pub struct ToolView {
 pub struct TurnView {
     pub idx: i64,
     pub when: String,
+    pub time: String,
+    /// Set on the first turn of each later day, so the margin can show it.
+    pub day: Option<String>,
+    /// The first line of the prompt, for the turn index.
+    pub excerpt: String,
     pub user: String,
     pub assistant: String,
     pub tools: Vec<ToolView>,
     pub matched: bool,
+    /// Set when the branch differs from the previous turn's.
     pub branch: Option<String>,
 }
 
@@ -926,12 +1012,16 @@ struct SessionTpl {
     chips: Vec<Chip>,
     cwd: String,
     cwd_gone: bool,
+    day: String,
+    duration: String,
     started: String,
     ended: String,
     model: String,
     resume: String,
+    /// The resume command without its `cd`; the directory is shown below it.
+    resume_cmd: String,
     turns: Vec<TurnView>,
-    matches: Vec<(i64, String)>,
+    n_matched: usize,
     entities: Vec<EntityGroup>,
     parent: Option<(String, String)>,
     children: Vec<(String, String)>,
@@ -962,8 +1052,9 @@ async fn session_page(
         } else {
             highlight_terms(&pq.text, &[])
         };
-        let mut matches = vec![];
-        let mut turns = vec![];
+        let mut turns: Vec<TurnView> = vec![];
+        let mut last_day = fmt_day(s.started);
+        let mut last_branch: Option<String> = None;
         for t in crate::store::turns(&c, &id)? {
             let (user, uh) = markdown(&t.user_text, &terms);
             let (assistant, ah) = markdown(&t.assistant_text, &terms);
@@ -978,26 +1069,33 @@ async fn session_page(
                         error: v["error"].as_bool().unwrap_or(false),
                     })
                     .collect();
-            let matched = uh + ah > 0;
-            if matched {
-                let label = if !t.user_text.is_empty() {
-                    &t.user_text
-                } else {
-                    &t.assistant_text
-                };
-                matches.push((
-                    t.idx,
-                    crate::model::clip_chars(label.lines().next().unwrap_or(""), 70),
-                ));
+            let label = if !t.user_text.trim().is_empty() {
+                &t.user_text
+            } else {
+                &t.assistant_text
+            };
+            let day = t.ts.map(fmt_day).filter(|d| *d != last_day);
+            if let Some(d) = &day {
+                last_day = d.clone();
+            }
+            let branch = t.branch.filter(|b| last_branch.as_ref() != Some(b));
+            if branch.is_some() {
+                last_branch = branch.clone();
             }
             turns.push(TurnView {
                 idx: t.idx,
                 when: t.ts.map(fmt_date).unwrap_or_default(),
+                time: t.ts.map(fmt_time).unwrap_or_default(),
+                day,
+                excerpt: crate::model::clip_chars(
+                    label.lines().find(|l| !l.trim().is_empty()).unwrap_or(""),
+                    90,
+                ),
                 user,
                 assistant,
                 tools,
-                matched,
-                branch: t.branch,
+                matched: uh + ah > 0,
+                branch,
             });
         }
         let mut groups: BTreeMap<&str, Vec<(String, String, String, String)>> = BTreeMap::new();
@@ -1079,12 +1177,15 @@ async fn session_page(
                 .cwd
                 .as_ref()
                 .is_some_and(|c| !std::path::Path::new(c).exists()),
+            day: fmt_day(s.started),
+            duration: fmt_duration(s.ended - s.started),
             started: fmt_date(s.started),
             ended: fmt_date(s.ended),
             model: s.model.clone().unwrap_or_default(),
             resume: crate::resume_command(s),
+            resume_cmd: crate::agent_resume(s),
+            n_matched: turns.iter().filter(|t| t.matched).count(),
             turns,
-            matches,
             entities,
             parent: s.parent_id.as_deref().and_then(link),
             children: cat
@@ -1115,6 +1216,10 @@ async fn session_page(
 struct EntityTpl {
     heading: String,
     kind: String,
+    count: String,
+    /// Colours the heading like the ref it came from.
+    ref_class: String,
+    github: Option<String>,
     results_html: String,
     search_href: Option<String>,
 }
@@ -1171,20 +1276,34 @@ async fn entity_page(
             ..Default::default()
         };
         let p = Params::default();
-        let mut results_html = render_results(&e, &p, &res, false, false)?;
+        // Matches the hrefs `chips_for` gives each ref.
+        let key = if ep.kind == "ticket" {
+            ep.key.to_lowercase()
+        } else {
+            ep.key.clone()
+        };
+        let own = format!("/e?kind={}&key={}", ep.kind, enc(&key));
+        let mut results_html = render_results(&e, &p, &res, false, false, Some(&own))?;
         if ids.is_empty() {
             results_html = "<p class=\"empty\">No sessions reference this.</p>".into();
         }
         let kind = match ep.kind.as_str() {
-            "repo" => "Repo",
+            "repo" => "Repository",
             "pr" => "Pull request",
             "ticket" => "Ticket",
             "branch" => "Branch",
             _ => "Entity",
         };
+        let n = ids.len();
         Ok(EntityTpl {
+            github: github_url(&ep.kind, &ep.key, None),
             heading: display,
-            kind: format!("{kind}, {} sessions", ids.len()),
+            kind: kind.into(),
+            count: format!("{n} {}", if n == 1 { "session" } else { "sessions" }),
+            ref_class: match ep.kind.as_str() {
+                "repo" | "branch" | "pr" | "ticket" => ep.kind.clone(),
+                _ => String::new(),
+            },
             results_html,
             search_href: (ep.kind == "repo" || ep.kind == "branch")
                 .then(|| format!("/?{}={}", ep.kind, enc(&ep.key))),
@@ -1202,25 +1321,19 @@ struct FeedbackForm {
     label: String,
 }
 
-/// "This was the one" / "Not this" on a result adds it to the eval set.
+/// The thumbs up / down on a result add it to the eval set. The page shows
+/// the vote itself, so there is nothing to send back.
 async fn feedback(
     State(e): State<AppState>,
     Form(f): Form<FeedbackForm>,
-) -> Result<Html<String>, AppError> {
+) -> Result<StatusCode, AppError> {
     let label = if f.label == "good" { "good" } else { "bad" };
     let c = e.conn()?;
     c.execute(
         "INSERT INTO feedback (ts, query, session_id, label) VALUES (?, ?, ?, ?)",
         rusqlite::params![chrono::Utc::now().timestamp(), f.q, f.session, label],
     )?;
-    Ok(Html(format!(
-        "<span class=\"saved\">{}</span>",
-        if label == "good" {
-            "Saved as the right session"
-        } else {
-            "Saved as a wrong result"
-        }
-    )))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub struct AppError(anyhow::Error);
@@ -1331,12 +1444,15 @@ mod tests {
                 chips: vec![],
                 cwd: String::new(),
                 cwd_gone: false,
+                day: String::new(),
+                duration: String::new(),
                 started: String::new(),
                 ended: String::new(),
                 model: String::new(),
                 resume: String::new(),
+                resume_cmd: String::new(),
                 turns: vec![],
-                matches: vec![],
+                n_matched: 0,
                 entities: vec![],
                 parent: None,
                 children: vec![],
@@ -1350,6 +1466,44 @@ mod tests {
             assert!(html.contains("Tests passed &amp; staging is pending."));
             assert!(!html.contains("<script>alert(1)</script>"));
         }
+    }
+
+    #[test]
+    fn match_reasons_land_on_the_ref_they_matched() {
+        let chip = |class, label: &str| Chip {
+            label: label.into(),
+            href: String::new(),
+            class,
+            title: String::new(),
+            github: None,
+            hit: false,
+        };
+        let mut chips = vec![
+            chip("chip repo", "widgets"),
+            chip("chip branch", "fix-order"),
+            chip("chip pr", "PR #12"),
+        ];
+        let reasons: Vec<String> = [
+            "exact pr acme/widgets#12",
+            "semantic",
+            "branch fix-order",
+            "time",
+            "exact commit abc123",
+            "rewrite",
+        ]
+        .map(String::from)
+        .into();
+        let (time_hit, notes) = place_reasons(&reasons, &mut chips);
+        assert!(time_hit);
+        assert_eq!(
+            chips.iter().map(|c| c.hit).collect::<Vec<_>>(),
+            [false, true, true]
+        );
+        assert_eq!(notes, ["similar meaning", "commit abc123", "related terms"]);
+
+        // Matched words are already highlighted, so meaning needs no note.
+        let (_, notes) = place_reasons(&["keyword".into(), "semantic".into()], &mut chips);
+        assert!(notes.is_empty(), "{notes:?}");
     }
 
     #[test]

@@ -14,9 +14,13 @@
   <a class="back" href="/">Search</a>
 </header>
 <header class="entity-head">
-  <p class="kind">{{ kind }}</p>
-  <h1>{{ heading }}</h1>
-  {% if let Some(h) = search_href %}<a class="scoped" href="{{ h }}">Search within these sessions</a>{% endif %}
+  <div class="mrow">
+    <div class="mg"><span>{{ kind }}</span><span>{{ count }}</span></div>
+    <div>
+      <h1 class="{{ ref_class }}">{{ crate::web::wbr(heading)|safe }}{% if let Some(g) = github %} <a class="ext" href="{{ g }}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open {{ heading }} on GitHub"></a>{% endif %}</h1>
+      {% if let Some(h) = search_href %}<a class="scoped" href="{{ h }}">Search within these sessions</a>{% endif %}
+    </div>
+  </div>
 </header>
 <main id="results">{{ results_html|safe }}</main>
 </body>
