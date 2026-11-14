@@ -8,6 +8,7 @@ class {{brewFormulaName}} < Formula
 
   on_macos do
     depends_on arch: :arm64
+    depends_on macos: :sequoia
   end
 
   def install

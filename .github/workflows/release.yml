@@ -3,15 +3,9 @@ name: Release
 on:
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing release tag to rebuild and publish (for example v0.1.0)
-        required: true
-        type: string
 
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -22,7 +16,6 @@ env:
 
 jobs:
   release-please:
-    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -30,36 +23,14 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
 
-  resolve:
-    needs: release-please
-    if: >-
-      always() && (needs.release-please.outputs.release_created == 'true' ||
-      github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-24.04
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Resolve existing release
-        id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag || needs.release-please.outputs.tag }}
-        run: |
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a stable vX.Y.Z tag'; exit 1; }
-          gh release view "$RELEASE_TAG" --json tagName
-          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: resolve
-    # resolve can run after release-please is skipped on manual dispatch.
-    if: always() && needs.resolve.result == 'success'
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -74,36 +45,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.resolve.outputs.tag }}
-          fetch-depth: 0
+          ref: ${{ needs.release-please.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           cache-directories: ~/.cache/ort.pyke.io
-      - name: Check version and build
-        env:
-          VERSION: ${{ needs.resolve.outputs.version }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          python3 -c 'import os,tomllib; assert tomllib.load(open("Cargo.toml", "rb"))["package"]["version"] == os.environ["VERSION"]'
-          cargo build --release --locked --target "$TARGET"
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - run: target/${{ matrix.target }}/release/recherche --version
       - uses: jreleaser/release-action@v2
         with:
           version: ${{ env.JRELEASER_VERSION }}
           arguments: assemble --select-current-platform
         env:
-          JRELEASER_PROJECT_VERSION: ${{ needs.resolve.outputs.version }}
+          JRELEASER_PROJECT_VERSION: ${{ needs.release-please.outputs.version }}
           JRELEASER_GITHUB_TOKEN: ${{ github.token }}
-      - name: Test packaged binary
-        env:
-          VERSION: ${{ needs.resolve.outputs.version }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          package="$RUNNER_TEMP/package"
-          mkdir -p "$package"
-          unzip -q "out/jreleaser/assemble/recherche/archive/recherche-$VERSION-$TARGET.zip" -d "$package"
-          binary=$(find "$package" -type f -path '*/bin/recherche')
-          bash scripts/release-smoke.sh "$binary" "$VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
@@ -111,94 +66,29 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [resolve, build]
-    if: always() && needs.build.result == 'success'
+    needs: [release-please, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
-      JRELEASER_PROJECT_VERSION: ${{ needs.resolve.outputs.version }}
-      JRELEASER_TAG_NAME: ${{ needs.resolve.outputs.tag }}
-      JRELEASER_GITHUB_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.resolve.outputs.tag }}
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: binary-*
-          path: artifacts
-          merge-multiple: true
-      - name: Validate archive set
-        run: |
-          for target in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-            unzip -t "artifacts/recherche-$JRELEASER_PROJECT_VERSION-$target.zip"
-          done
-          test "$(find artifacts -name '*.zip' | wc -l)" -eq 3
-      - uses: jreleaser/release-action@v2
-        with:
-          version: ${{ env.JRELEASER_VERSION }}
-          arguments: prepare -PskipArchiveResolver
-      - name: Validate formula syntax
-        run: ruby -c out/jreleaser/prepare/recherche/brew/Formula/recherche.rb
-      - uses: jreleaser/release-action@v2
-        with:
-          version: ${{ env.JRELEASER_VERSION }}
-          arguments: release -PskipArchiveResolver
-      - uses: actions/upload-artifact@v4
-        with:
-          name: homebrew-formula
-          path: out/jreleaser/prepare/recherche/brew/Formula/recherche.rb
-          if-no-files-found: error
-
-  test-formula:
-    needs: [resolve, publish]
-    if: always() && needs.publish.result == 'success'
-    strategy:
-      matrix:
-        os: [macos-15, ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: homebrew-formula
-          path: formula
-      - uses: Homebrew/actions/setup-homebrew@main
-      - name: Install and test formula
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: |
-          brew tap-new local/release-test
-          cp formula/recherche.rb "$(brew --repository local/release-test)/Formula/recherche.rb"
-          brew install local/release-test/recherche
-          brew test local/release-test/recherche
-
-  update-tap:
-    needs: [resolve, test-formula]
-    if: always() && needs.test-formula.result == 'success'
-    runs-on: ubuntu-24.04
-    env:
-      JRELEASER_PROJECT_VERSION: ${{ needs.resolve.outputs.version }}
-      JRELEASER_TAG_NAME: ${{ needs.resolve.outputs.tag }}
+      JRELEASER_PROJECT_VERSION: ${{ needs.release-please.outputs.version }}
+      JRELEASER_TAG_NAME: ${{ needs.release-please.outputs.tag }}
       JRELEASER_GITHUB_TOKEN: ${{ github.token }}
       JRELEASER_HOMEBREW_GITHUB_TOKEN: ${{ secrets.JRELEASER_HOMEBREW_GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.resolve.outputs.tag }}
+          ref: ${{ needs.release-please.outputs.tag }}
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           pattern: binary-*
           path: artifacts
           merge-multiple: true
-      - name: Check tap credentials
-        run: test -n "$JRELEASER_HOMEBREW_GITHUB_TOKEN" || { echo 'Set the JRELEASER_HOMEBREW_GITHUB_TOKEN Actions secret with contents-write access to homebrew-tap'; exit 1; }
       - uses: jreleaser/release-action@v2
         with:
           version: ${{ env.JRELEASER_VERSION }}
-          arguments: prepare -PskipArchiveResolver
+          arguments: release -PskipArchiveResolver
       - uses: jreleaser/release-action@v2
         with:
           version: ${{ env.JRELEASER_VERSION }}

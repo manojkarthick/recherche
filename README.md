@@ -146,7 +146,7 @@ source exclusions, service setup, and the data retained locally.
 | [Usage](docs/usage.md) | Search syntax, browser controls, CLI commands, summaries, and evaluation |
 | [Configuration and operation](docs/configuration.md) | File locations, settings, optional API calls, background services, and troubleshooting |
 | [Architecture](docs/architecture.md) | Architecture diagram, import and search flows, storage, and source-code map |
-| [Releasing](docs/releases.md) | Binary publishing, Homebrew token setup, and retrying releases |
+| [Releasing](docs/releases.md) | Binary publishing and Homebrew token setup |
 | [HTTP API](docs/api.md) | Client-independent JSON API for search, sessions, transcripts, and entity navigation |
 | [Example configuration](config.example.toml) | Copyable settings with defaults |
 
