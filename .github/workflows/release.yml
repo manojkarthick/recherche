@@ -8,12 +8,88 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
+env:
+  JRELEASER_VERSION: 1.27.0
+
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
+
+  build:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: ~/.cache/ort.pyke.io
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - run: target/${{ matrix.target }}/release/recherche --version
+      - uses: jreleaser/release-action@v2
+        with:
+          version: ${{ env.JRELEASER_VERSION }}
+          arguments: assemble --select-current-platform
+        env:
+          JRELEASER_PROJECT_VERSION: ${{ needs.release-please.outputs.version }}
+          JRELEASER_GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: out/jreleaser/assemble/recherche/archive/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [release-please, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      JRELEASER_PROJECT_VERSION: ${{ needs.release-please.outputs.version }}
+      JRELEASER_TAG_NAME: ${{ needs.release-please.outputs.tag }}
+      JRELEASER_GITHUB_TOKEN: ${{ github.token }}
+      JRELEASER_HOMEBREW_GITHUB_TOKEN: ${{ secrets.JRELEASER_HOMEBREW_GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: artifacts
+          merge-multiple: true
+      - uses: jreleaser/release-action@v2
+        with:
+          version: ${{ env.JRELEASER_VERSION }}
+          arguments: release -PskipArchiveResolver
+      - uses: jreleaser/release-action@v2
+        with:
+          version: ${{ env.JRELEASER_VERSION }}
+          arguments: publish -PskipArchiveResolver

@@ -1,0 +1,71 @@
+environment:
+  properties:
+    artifactsDir: artifacts
+
+project:
+  name: recherche
+  description: Search your past Claude Code and Codex sessions
+  links:
+    homepage: https://github.com/manojkarthick/recherche
+  authors: [Manoj Karthick]
+  license: MIT
+  inceptionYear: 2026
+
+platform:
+  replacements:
+    osx-aarch_64: aarch64-apple-darwin
+    linux-x86_64: x86_64-unknown-linux-gnu
+    linux-aarch_64: aarch64-unknown-linux-gnu
+
+release:
+  github:
+    owner: manojkarthick
+    name: recherche
+    branch: main
+    skipTag: true
+    # release-please owns the tag, title and changelog.
+    overwrite: false
+    update:
+      enabled: true
+      sections: [ASSETS]
+    uploadAssets: ALWAYS
+
+assemble:
+  archive:
+    recherche:
+      active: ALWAYS
+      formats: [ZIP]
+      attachPlatform: true
+      fileSets:
+        - input: 'target/{{osPlatformReplaced}}/release'
+          output: bin
+          includes: [recherche]
+        - input: .
+          includes: [LICENSE]
+
+distributions:
+  recherche:
+    type: BINARY
+    executable:
+      name: recherche
+    artifacts:
+      - path: '{{artifactsDir}}/recherche-{{projectVersion}}-aarch64-apple-darwin.zip'
+        platform: osx-aarch_64
+      - path: '{{artifactsDir}}/recherche-{{projectVersion}}-x86_64-unknown-linux-gnu.zip'
+        platform: linux-x86_64
+      - path: '{{artifactsDir}}/recherche-{{projectVersion}}-aarch64-unknown-linux-gnu.zip'
+        platform: linux-aarch_64
+
+packagers:
+  brew:
+    active: ALWAYS
+    formulaName: Recherche
+    multiPlatform: true
+    skipTemplates: [README.md.tpl]
+    extraProperties:
+      skipLicenseFile: true
+    repository:
+      active: ALWAYS
+      owner: manojkarthick
+      name: homebrew-tap
+      tagRepository: false

@@ -26,6 +26,22 @@ agent and its session data.
 
 ## Get started
 
+Install a published release with Homebrew:
+
+```sh
+brew install manojkarthick/tap/recherche
+recherche serve
+```
+
+Prebuilt ZIP archives and SHA-256 checksums are also available on the
+[GitHub Releases page](https://github.com/manojkarthick/recherche/releases).
+They support Apple Silicon macOS 15+, and x86_64/ARM64 Linux on Ubuntu 24.04
+or compatible newer systems. Extract the archive and put `bin/recherche` on
+your `PATH`. Linux needs glibc, libstdc++, OpenSSL 3 and CA certificates;
+on Ubuntu install `libc6 libstdc++6 libssl3t64 ca-certificates`.
+
+### Build from source
+
 You need a recent stable Rust toolchain and native build tools: Xcode Command
 Line Tools on macOS, or a C/C++ build toolchain on Linux. Service installation
 supports macOS and Linux; the ingestion code uses Unix filesystem APIs.
@@ -130,6 +146,7 @@ source exclusions, service setup, and the data retained locally.
 | [Usage](docs/usage.md) | Search syntax, browser controls, CLI commands, summaries, and evaluation |
 | [Configuration and operation](docs/configuration.md) | File locations, settings, optional API calls, background services, and troubleshooting |
 | [Architecture](docs/architecture.md) | Architecture diagram, import and search flows, storage, and source-code map |
+| [Releasing](docs/releases.md) | Binary publishing and Homebrew token setup |
 | [HTTP API](docs/api.md) | Client-independent JSON API for search, sessions, transcripts, and entity navigation |
 | [Example configuration](config.example.toml) | Copyable settings with defaults |
 

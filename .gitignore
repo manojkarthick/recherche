@@ -25,3 +25,7 @@
 /archived_sessions/
 /config.toml
 /eval.toml
+
+# Release packaging output.
+/out/
+/artifacts/
