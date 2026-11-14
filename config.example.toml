@@ -10,7 +10,11 @@ listen = "127.0.0.1:7777"
 ticket_patterns = ['\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b']
 # Worktree layouts, so a worktree of a repo groups with the repo even when no
 # session recorded its remote. `repo` names the repo; `root` is the main checkout.
+# The first matching pattern wins.
 worktree_patterns = [
+  '/\.codex/worktrees/[^/]+/(?P<repo>[^/]+)',
+  '/\.herdr/worktrees/(?P<repo>[^/]+)/[^/]+',
+  '/conductor/workspaces/(?P<repo>[^/]+)/[^/]+',
   '/worktrees/(?P<repo>[^/]+)/[^/]+',
   '^(?P<root>.*/(?P<repo>[^/]+))/\.claude/worktrees/[^/]+',
 ]
