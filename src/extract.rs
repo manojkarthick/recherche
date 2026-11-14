@@ -365,4 +365,18 @@ mod tests {
         assert!(has("ticket", "ABC-123").is_some());
         assert!(has("ticket", "UTF-8").is_none());
     }
+
+    #[test]
+    fn default_worktree_layouts_name_the_repo() {
+        let pats = compile(&crate::config::Config::default().worktree_patterns);
+        for (cwd, repo) in [
+            ("/home/u/.codex/worktrees/0867/shop", "shop"),
+            ("/home/u/.codex/worktrees/0867/shop/src", "shop"),
+            ("/home/u/.herdr/worktrees/shop/fix-login", "shop"),
+            ("/home/u/conductor/workspaces/shop/nagoya", "shop"),
+            ("/home/u/code/shop/.claude/worktrees/fix-login", "shop"),
+        ] {
+            assert_eq!(repo_from_path(cwd, &pats).1, repo, "{cwd}");
+        }
+    }
 }

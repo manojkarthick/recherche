@@ -86,6 +86,10 @@ impl Default for Config {
             .map(String::from)
             .to_vec(),
             worktree_patterns: vec![
+                // Codex puts the id before the repo, so it must precede the generic layout.
+                r"/\.codex/worktrees/[^/]+/(?P<repo>[^/]+)".into(),
+                r"/\.herdr/worktrees/(?P<repo>[^/]+)/[^/]+".into(),
+                r"/conductor/workspaces/(?P<repo>[^/]+)/[^/]+".into(),
                 r"/worktrees/(?P<repo>[^/]+)/[^/]+".into(),
                 r"^(?P<root>.*/(?P<repo>[^/]+))/\.claude/worktrees/[^/]+".into(),
             ],
