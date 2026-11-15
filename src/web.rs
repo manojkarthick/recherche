@@ -14,11 +14,11 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Form, Router};
+use regex::Regex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use regex::Regex;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio_stream::StreamExt;
@@ -602,7 +602,11 @@ fn code_spans(html: &str) -> String {
             }
             // A close with no open: the clip removed the start of the span.
             CODE_CLOSE => {
-                let at = if out.starts_with('…') { '…'.len_utf8() } else { 0 };
+                let at = if out.starts_with('…') {
+                    '…'.len_utf8()
+                } else {
+                    0
+                };
                 out.insert_str(at, "<code>");
                 out.push_str("</code>");
             }
@@ -626,7 +630,12 @@ fn summary_html(text: &str, terms: &[String]) -> String {
     if !lines.is_empty() && lines.iter().all(|l| l.starts_with("- ")) {
         let items: String = lines
             .iter()
-            .map(|l| format!("<li>{}</li>", code_spans(&highlight(&code_marks(&l[2..]), terms, None).0)))
+            .map(|l| {
+                format!(
+                    "<li>{}</li>",
+                    code_spans(&highlight(&code_marks(&l[2..]), terms, None).0)
+                )
+            })
             .collect();
         format!("<ul>{items}</ul>")
     } else {
@@ -677,7 +686,11 @@ fn result_view(
         } else {
             format!(
                 "<span class=\"who logo {}\" role=\"img\" aria-label=\"{}\" title=\"{}\"></span> {}",
-                if s.source == "claude" { "claude" } else { "codex" },
+                if s.source == "claude" {
+                    "claude"
+                } else {
+                    "codex"
+                },
                 agent_name(&s.source),
                 agent_name(&s.source),
                 code_spans(&a)
