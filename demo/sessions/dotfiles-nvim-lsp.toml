@@ -1,0 +1,25 @@
+agent = "codex"
+cwd = "code/dotfiles"
+branch = "main"
+ago = "74d8h"
+
+[[turns]]
+prompt = "nvim's rust-analyzer takes forever on the billing repo"
+reply = "rust-analyzer runs `cargo check` on every save with all features, which builds the test fixtures crate. Setting `check.allTargets = false` cuts it from 40s to 6s."
+
+[[turns.tools]]
+command = "time cargo check --all-targets --all-features"
+output = "real    0m41.2s"
+
+[[turns.tools]]
+command = "time cargo check"
+output = "real    0m6.1s"
+
+[summary]
+title = "Speed up rust-analyzer on a large repo"
+summary = '''
+- rust-analyzer checked all targets and features on every save.
+- `check.allTargets = false` brings a check from 41s to 6s.'''
+kind = "research"
+outcome = "investigated"
+tags = ["neovim", "rust-analyzer"]

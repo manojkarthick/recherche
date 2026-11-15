@@ -1,6 +1,7 @@
 mod api;
 mod config;
 mod daemon;
+mod demo;
 mod eval;
 mod extract;
 mod ingest;
@@ -116,6 +117,19 @@ enum Cmd {
     InstallService,
     /// Show paths, counts and unparsed lines.
     Doctor,
+    /// Serve made-up sessions from demo/sessions, for trying UI changes and
+    /// taking screenshots. Ignores your own sessions and never calls an API.
+    #[command(hide = true)]
+    Demo {
+        /// Where the made-up sessions and their index go. Each run replaces
+        /// what an earlier run wrote there.
+        #[arg(default_value = "/tmp/recherche-demo")]
+        dir: PathBuf,
+        /// Address to listen on; not the default port, so it can run next
+        /// to your own server.
+        #[arg(long, default_value = "127.0.0.1:7778")]
+        listen: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -224,30 +238,7 @@ fn main() -> Result<()> {
             if let Some(l) = listen {
                 cfg.listen = l;
             }
-            if !cfg.is_loopback() && cfg.token.is_none() {
-                bail!(
-                    "listening on {} is reachable from other machines; set `token` in the config first",
-                    cfg.listen
-                );
-            }
-            let listen = cfg.listen.clone();
-            let engine = Arc::new(search::Engine::open(cfg)?);
-            {
-                let c = engine.conn()?;
-                if store::get_meta(&c, "auto_summary_since")?.is_none() {
-                    store::set_meta(
-                        &c,
-                        "auto_summary_since",
-                        &chrono::Utc::now().timestamp().to_string(),
-                    )?;
-                }
-            }
-            let e2 = engine.clone();
-            std::thread::spawn(move || daemon::run(e2));
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-                .block_on(web::serve(engine, &listen))?;
+            serve(search::Engine::open(cfg)?)?;
         }
         Cmd::Open { query } => {
             let q = query.join(" ");
@@ -338,8 +329,41 @@ fn main() -> Result<()> {
         }
         Cmd::InstallService => install_service()?,
         Cmd::Doctor => doctor(cfg)?,
+        Cmd::Demo { dir, listen } => {
+            let mut cfg = cfg;
+            cfg.listen = listen;
+            serve(demo::prepare(cfg, &dir)?)?;
+        }
     }
     Ok(())
+}
+
+/// Runs the indexer in the background and the web UI until stopped.
+fn serve(engine: search::Engine) -> Result<()> {
+    if !engine.cfg.is_loopback() && engine.cfg.token.is_none() {
+        bail!(
+            "listening on {} is reachable from other machines; set `token` in the config first",
+            engine.cfg.listen
+        );
+    }
+    let engine = Arc::new(engine);
+    {
+        let c = engine.conn()?;
+        if store::get_meta(&c, "auto_summary_since")?.is_none() {
+            store::set_meta(
+                &c,
+                "auto_summary_since",
+                &chrono::Utc::now().timestamp().to_string(),
+            )?;
+        }
+    }
+    let listen = engine.cfg.listen.clone();
+    let e2 = engine.clone();
+    std::thread::spawn(move || daemon::run(e2));
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(web::serve(engine, &listen))
 }
 
 fn parse_since(value: &str) -> Result<i64, String> {

@@ -1,0 +1,22 @@
+agent = "codex"
+cwd = "code/billing-api"
+repo = "northwind/billing-api"
+branch = "feat/BILL-77-proration"
+ago = "20d2h"
+
+[[turns]]
+prompt = "BILL-77: customers who upgrade mid-cycle get charged the full month. prorate it"
+reply = "Upgrades now charge `(new - old) × days_left / days_in_cycle`, rounded half-even to the cent. Downgrades credit the difference on the next invoice instead of refunding."
+
+[[turns.tools]]
+command = "make test"
+output = "ok  all 112 tests passed"
+
+[summary]
+title = "Prorate mid-cycle plan upgrades (BILL-77)"
+summary = '''
+- Upgrades charge the price difference for the days left in the cycle, rounded half-even.
+- Downgrades become a credit on the next invoice rather than a refund.'''
+kind = "feature"
+outcome = "shipped"
+tags = ["billing", "proration"]

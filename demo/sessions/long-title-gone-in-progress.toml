@@ -1,0 +1,20 @@
+# A long title, a deleted worktree, and activity within the last few
+# minutes, so it shows as in progress.
+agent = "claude"
+cwd = "code/notebook/.claude/worktrees/attachment-uploads"
+cwd_gone = true
+branch = "feat/resumable-attachment-uploads"
+ago = "12m"
+title = "Make attachment uploads resumable after the app is backgrounded or loses its connection halfway through a large file"
+
+[[turns]]
+prompt = "big attachments restart from zero if the app is backgrounded on iOS. make uploads resumable"
+reply = "Switching uploads to tus: the client keeps the upload URL and offset in IndexedDB and resumes with a `HEAD` then `PATCH`. Server side is next."
+
+[[turns.tools]]
+command = "pnpm test -- upload"
+error = true
+output = '''
+FAIL src/attachments/upload.test.ts
+  ● resumes from stored offset
+    TypeError: store.getOffset is not a function'''

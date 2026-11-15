@@ -1,0 +1,15 @@
+# A long title and a deleted worktree, idle, so its summary is queued.
+agent = "claude"
+cwd = "code/billing-api/.claude/worktrees/dunning-retries"
+cwd_gone = true
+branch = "feat/BILL-131-dunning-retry-schedule"
+ago = "2h"
+title = "Rework the dunning retry schedule so failed card payments are retried on the customer's usual payday instead of every three days"
+
+[[turns]]
+prompt = "BILL-131: failed card payments retry every 3 days, which mostly fails again. retry around the day they paid successfully before"
+reply = "Retries now target the day of month of the customer's last three successful payments, falling back to every 3 days when there is no history. Max four attempts, as before."
+
+[[turns.tools]]
+command = "cargo test dunning"
+output = "test result: ok. 23 passed; 0 failed; 0 ignored"

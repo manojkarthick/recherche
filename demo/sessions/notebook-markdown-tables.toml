@@ -1,0 +1,22 @@
+agent = "codex"
+cwd = "code/notebook"
+repo = "lumen/notebook"
+branch = "feat/markdown-tables"
+ago = "47d5h"
+
+[[turns]]
+prompt = "let people edit markdown tables inline, at least add/remove rows"
+reply = "Tables now render as an editable grid. Tab moves between cells, Enter in the last row adds one, and the row menu deletes. Saving writes the Markdown back with aligned pipes."
+
+[[turns.tools]]
+command = "pnpm test -- table"
+output = "PASS src/editor/table.test.ts (9 tests)"
+
+[summary]
+title = "Inline Markdown table editing"
+summary = '''
+- Markdown tables render as an editable grid with keyboard navigation.
+- Rows can be added from the last cell and deleted from the row menu.'''
+kind = "feature"
+outcome = "shipped"
+tags = ["editor", "markdown"]

@@ -1,0 +1,23 @@
+agent = "claude"
+cwd = "code/notebook"
+branch = "docs/sync-architecture"
+ago = "56d6h"
+title = "Write up sync architecture"
+
+[[turns]]
+prompt = "write a doc explaining how sync works now, for the new hire"
+reply = "Wrote `docs/sync.md`: the local queue, how revisions are compared, what happens on conflict, and a sequence diagram of two devices reconnecting."
+
+[[turns.tools]]
+name = "Write"
+input = { file_path = "{root}/code/notebook/docs/sync.md" }
+output = "File created successfully."
+
+[summary]
+title = "Document the sync architecture"
+summary = '''
+- Wrote docs/sync.md covering the offline queue, revision checks and conflicts.
+- Added a sequence diagram of two devices reconnecting at once.'''
+kind = "docs"
+outcome = "shipped"
+tags = ["sync", "onboarding"]

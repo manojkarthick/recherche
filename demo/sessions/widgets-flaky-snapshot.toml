@@ -1,0 +1,15 @@
+agent = "claude"
+cwd = "code/widgets"
+branch = "fix/flaky-snapshot-test"
+ago = "11d1h"
+
+[[turns]]
+prompt = "the dashboard snapshot test fails about one run in five on CI, can you find out why"
+reply = "The snapshot includes a relative date (\"3 minutes ago\") rendered from the real clock. When CI is slow it becomes \"4 minutes ago\". I froze the clock in the test setup."
+
+[[turns.tools]]
+command = "for i in $(seq 20); do pnpm test dashboard -- --silent || echo FAIL $i; done"
+output = '''
+FAIL 4
+FAIL 13
+FAIL 17'''

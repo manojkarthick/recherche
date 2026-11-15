@@ -1,0 +1,37 @@
+agent = "claude"
+cwd = "code/widgets"
+branch = "feat/WID-1203-csv-export"
+ago = "2d"
+title = "Add CSV export to the widgets report"
+pr = "acme/widgets#400"
+
+[[turns]]
+prompt = "add a CSV export button to the weekly report, same columns as the table"
+reply = '''
+Added an **Export CSV** button next to the date picker.
+
+- `report::to_csv` reuses the table's column list, so the two can't drift.
+- Dates are ISO 8601 and amounts have no currency symbol, so spreadsheets parse them.
+- New test: `exports_same_columns_as_table`.'''
+
+[[turns.tools]]
+command = "git push -u origin feat/WID-1203-csv-export"
+output = '''
+remote: Create a pull request for 'feat/WID-1203-csv-export' on GitHub by visiting:
+remote:      https://github.com/acme/widgets/pull/new/feat/WID-1203-csv-export
+To github.com:acme/widgets.git
+ * [new branch]      feat/WID-1203-csv-export -> feat/WID-1203-csv-export'''
+
+[[turns]]
+prompt = "thanks, looks good"
+reply = "Glad it works."
+
+[summary]
+title = "Add CSV export to the weekly widgets report"
+summary = '''
+- Added an Export CSV button to the weekly report for WID-1203.
+- The export reuses the table's column list; dates are ISO 8601.
+- Opened acme/widgets#400.'''
+kind = "feature"
+outcome = "shipped"
+tags = ["csv", "reports"]

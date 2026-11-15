@@ -117,7 +117,8 @@ impl Engine {
     pub fn refresh_with(&self, rebuild: bool, embed: bool) -> Result<crate::ingest::Stats> {
         let _g = self.refresh_lock.lock().unwrap();
         let mut c = self.conn()?;
-        let stats = crate::ingest::Ingester::new(&self.cfg).run(&mut c, rebuild)?;
+        let stats = crate::ingest::Ingester::new(&self.cfg, self.db.with_file_name("archive"))
+            .run(&mut c, rebuild)?;
         self.lex
             .update(&mut c, self.cfg.search.boilerplate_min_sessions, rebuild)?;
         // Another process can finish indexing and clear dirty flags before this
