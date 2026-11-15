@@ -16,33 +16,29 @@
 {% for r in results %}
 <li class="result" data-href="{{ r.href }}" data-resume="{{ r.resume }}">
   <div class="r-head">
-    <div class="r-title-group">
-      <span class="agent {{ r.agent }}">{% if r.agent == "claude" %}claude{% else %}codex{% endif %}</span>{% if r.is_sub %}<span class="sub">sub</span>{% endif %}
-      <a class="title" href="{{ r.href }}">{{ r.title }}</a>
-    </div>
-    <div class="r-meta">
-      <div class="foot">
-        <button type="button" class="btn copy act" data-copy="{{ r.resume }}" title="{{ r.resume }}"><span class="lbl">Copy CLI</span></button>
-        {% if !q.is_empty() %}
-        <form class="evals act" hx-post="/feedback" hx-swap="none" role="group" aria-label="Feedback for the eval set">
-          <input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="session" value="{{ r.session_id }}">
-          <button class="btn good" name="label" value="good" aria-pressed="false" aria-label="Relevant" title="Relevant (adds to eval set)"></button>
-          <button class="btn bad" name="label" value="bad" aria-pressed="false" aria-label="Not relevant" title="Not relevant"></button>
-        </form>
-        {% endif %}
-      </div>
-      {% for n in r.notes %}<span class="gnote">{{ n }}</span>{% endfor %}
-      {% if r.cwd_gone %}<span class="warn-badge" title="Directory no longer exists on disk">cwd missing</span>{% endif %}
-      <time title="{{ r.when }}"{% if r.time_hit %} class="hit"{% endif %}>{{ r.ago }}</time>
-    </div>
+    <a class="title" href="{{ r.href }}">{{ r.title }}</a>
+    <span class="r-when">{% if r.cwd_gone %}<span class="warn-badge" title="Recreate the directory before resuming. The resume command will fail without it.">Directory no longer exists</span>{% endif %}<time title="{{ r.when }}"{% if r.time_hit %} class="hit"{% endif %}>{{ r.ago }}</time></span>
   </div>
   {% if let Some(b) = r.blurb %}<div class="blurb">{{ b|safe }}</div>{% endif %}
   {% for s in r.snippets %}<p class="snippet">{{ s|safe }}</p>{% endfor %}
-  {% if !r.chips.is_empty() %}
-  <div class="refs">
-    {% for c in r.chips %}<span class="ref-item"><a class="{{ c.class }}{% if c.hit %} hit{% endif %}" href="{{ c.href }}" title="{{ c.title }}">{{ c.label }}</a>{% if let Some(g) = c.github %}<a class="ext" href="{{ g }}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open {{ c.label }} on GitHub"></a>{% endif %}</span>{% endfor %}
+  <div class="r-foot">
+    <div class="r-refs">
+    <span class="agent-tag"><span class="logo {{ r.agent }}" role="img" aria-label="{% if r.agent == "claude" %}Claude Code{% else %}Codex{% endif %}" title="{% if r.agent == "claude" %}Claude Code{% else %}Codex{% endif %}"></span>{% if r.is_sub %}<span class="sub">subagent</span>{% endif %}</span>
+    <div class="r-lines">
+    {% for line in crate::web::chip_lines(r.chips) %}<div class="r-line">{% for c in line %}{% include "chip.html" %}{% endfor %}{% if loop.first %}{% for n in r.notes %}<span class="gnote">{{ n }}</span>{% endfor %}{% endif %}</div>{% endfor %}
+    </div>
+    </div>
+    <span class="foot">
+      <button type="button" class="btn copy act" data-copy="{{ r.resume }}" title="{{ r.resume }}"><span class="lbl">Copy resume command</span></button>
+      {% if !q.is_empty() %}
+      <form class="evals act" hx-post="/feedback" hx-swap="none" role="group" aria-label="Feedback for the eval set">
+        <input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="session" value="{{ r.session_id }}">
+        <button class="btn good" name="label" value="good" aria-pressed="false" aria-label="This was it" title="This was it. Adds this query and session to the eval set"></button>
+        <button class="btn bad" name="label" value="bad" aria-pressed="false" aria-label="Not this" title="Not this. Records it as a wrong result for this query"></button>
+      </form>
+      {% endif %}
+    </span>
   </div>
-  {% endif %}
 </li>
 {% endfor %}
 </ol>
@@ -53,7 +49,7 @@
 <section>
 <h2>{{ g.name }}</h2>
 <ul>
-{% for i in g.items %}<li><a href="{{ i.href }}" hx-get="{{ i.hx_href }}" hx-target="#results"{% if i.active %} class="on" aria-current="true"{% endif %}><span class="l"{% if !i.title.is_empty() %} title="{{ i.title }}"{% endif %}>{{ i.label }}</span><span class="n">{{ i.count }}</span></a></li>{% endfor %}
+{% for i in g.items %}<li><a href="{{ i.href }}" hx-get="{{ i.hx_href }}" hx-target="#results"{% if i.active %} class="on" aria-current="true"{% endif %}><span class="l"{% if !i.title.is_empty() %} title="{{ i.title }}"{% endif %}>{% if !i.logo.is_empty() %}<span class="logo {{ i.logo }}" aria-hidden="true"></span>{% endif %}{{ i.label }}</span><span class="n">{{ i.count }}</span></a></li>{% endfor %}
 </ul>
 </section>
 {% endfor %}

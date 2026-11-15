@@ -13,19 +13,22 @@
 <body class="search-page">
 <header class="masthead">
   <div class="masthead-inner">
-    <a class="wordmark" href="/">recherche</a>
+    <div class="mast-top">
+      <a class="wordmark" href="/">recherche</a>
+      <span class="keys-inline"><kbd>/</kbd> search <kbd>j</kbd><kbd>k</kbd> move <kbd>Enter</kbd> open <kbd>c</kbd> copy resume command</span>
+    </div>
     <form id="search" action="/" method="get" role="search">
-      <label class="visually-hidden" for="q">Search sessions</label>
+      <label class="visually-hidden" for="q">Search your sessions</label>
       <div class="search-box">
         <span class="search-icon" aria-hidden="true"></span>
-        <input id="q" name="q" type="search" value="{{ q }}" placeholder="Search {{ sessions }} sessions (keywords, repo:, branch:, PR#, ticket…)" autocomplete="off" spellcheck="false"{% if q.is_empty() %} autofocus{% endif %}
+        <input id="q" name="q" type="search" value="{{ q }}" placeholder="What were you working on?" autocomplete="off" spellcheck="false"{% if q.is_empty() %} autofocus{% endif %}
           hx-get="/search" hx-trigger="input changed delay:150ms, search" hx-target="#results" hx-include="#search-filters" hx-sync="this:replace">
         <kbd class="slash-hint" aria-hidden="true">/</kbd>
       </div>
     </form>
+    <p class="hint">Describe it the way you remember it, or paste a ticket, PR, branch or file name. Searching {{ sessions }} sessions from Claude Code and Codex.</p>
   </div>
 </header>
 <main id="results">{{ results_html|safe }}</main>
-<footer class="keys"><kbd>/</kbd> search <kbd>j</kbd><kbd>k</kbd> navigate <kbd>Enter</kbd> open <kbd>c</kbd> copy cli</footer>
 </body>
 </html>

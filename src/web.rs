@@ -18,7 +18,8 @@ use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::sync::Arc;
+use regex::Regex;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
@@ -222,6 +223,18 @@ pub struct Chip {
     pub github: Option<String>,
     /// The search matched on this ref.
     pub hit: bool,
+    /// Refs of the session's repo share line 0; each other repo whose PRs
+    /// the session touched gets a line of its own.
+    pub line: u8,
+}
+
+/// Chips split into their lines. Always at least one line, which also holds
+/// the notes.
+pub fn chip_lines(chips: &[Chip]) -> Vec<&[Chip]> {
+    if chips.is_empty() {
+        return vec![&[]];
+    }
+    chips.chunk_by(|a, b| a.line == b.line).collect()
 }
 
 /// The GitHub page for a PR, repo or branch entity key. A branch needs the
@@ -277,6 +290,8 @@ pub struct FacetItem {
     pub href: String,
     pub hx_href: String,
     pub active: bool,
+    /// Agent logo class, empty for other facets.
+    pub logo: &'static str,
 }
 
 pub struct FacetGroup {
@@ -332,6 +347,7 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             },
             github: github_url("repo", k, None),
             hit: false,
+            line: 0,
         });
     }
     let branches = cat.entities_of(&s.id, "branch");
@@ -347,30 +363,40 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             title: "Branch".into(),
             github: github_url("branch", &b.key, s.repo_key.as_deref()),
             hit: false,
+            line: 0,
         });
     }
     let mut prs = cat.entities_of(&s.id, "pr");
     prs.sort_by_key(|e| -e.strength);
     let repo = cat.repo_name(s).unwrap_or_default().to_lowercase();
+    // PRs in other repos, grouped by repo in order of their strongest PR.
+    let mut others: Vec<(String, Vec<Chip>)> = vec![];
     for p in prs.iter().filter(|p| p.strength >= 2).take(3) {
         let verb = match p.strength {
             4 => "Opened in this session",
             3 => "Linked to this session",
             _ => "Pushed for",
         };
-        // Within the session's own repo, the number is enough.
-        let label = match p.display.split_once('#') {
-            Some((r, n)) if !repo.is_empty() && r.to_lowercase() == repo => format!("PR #{n}"),
-            _ => p.display.clone(),
-        };
-        chips.push(Chip {
+        let chip = |label| Chip {
             label,
             href: format!("/e?kind=pr&key={}", enc(&p.key)),
             class: "chip pr",
             title: format!("{verb}: {}", p.display),
             github: github_url("pr", &p.key, None),
             hit: false,
-        });
+            line: 0,
+        };
+        match p.display.split_once('#') {
+            Some((r, n)) if repo.is_empty() || r.to_lowercase() != repo => {
+                let chip = chip(format!("PR #{n}"));
+                match others.iter_mut().find(|(o, _)| o.eq_ignore_ascii_case(r)) {
+                    Some((_, c)) => c.push(chip),
+                    None => others.push((r.to_string(), vec![chip])),
+                }
+            }
+            Some((_, n)) => chips.push(chip(format!("PR #{n}"))),
+            None => chips.push(chip(p.display.clone())),
+        }
     }
     for t in cat.entities_of(&s.id, "ticket").iter().take(3) {
         chips.push(Chip {
@@ -380,7 +406,22 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             title: "Ticket".into(),
             github: None,
             hit: false,
+            line: 0,
         });
+    }
+    for (i, (r, prs)) in others.into_iter().enumerate() {
+        let line = i as u8 + 1;
+        let key = format!("github.com/{}", r.to_lowercase());
+        chips.push(Chip {
+            label: r,
+            href: format!("/e?kind=repo&key={}", enc(&key)),
+            class: "chip repo",
+            title: "Repo".into(),
+            github: github_url("repo", &key, None),
+            hit: false,
+            line,
+        });
+        chips.extend(prs.into_iter().map(|c| Chip { line, ..c }));
     }
     chips
 }
@@ -522,6 +563,59 @@ fn place_reasons(reasons: &[String], chips: &mut [Chip]) -> (bool, Vec<String>) 
     (time_hit, notes)
 }
 
+/// Drops Markdown syntax that reads as noise in a short excerpt: emphasis,
+/// heading and quote markers, and link targets. Runs before highlighting.
+fn plain_excerpt(text: &str) -> String {
+    static LINK: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"!?\[([^\]\n]*)\]\((?:<[^>\n]*>|[^)\s]*)\)").unwrap());
+    static MARKERS: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)\*\*|^[ \t]*(?:#{1,6}|>)[ \t]+").unwrap());
+    code_marks(&MARKERS.replace_all(&LINK.replace_all(text, "$1"), ""))
+}
+
+const CODE_OPEN: char = '\u{E000}';
+const CODE_CLOSE: char = '\u{E001}';
+
+/// Pairs `code` backticks before any clipping, as private-use marks that
+/// survive highlighting. Pairing after a clip would match the wrong backticks
+/// when the clip lands inside a span.
+fn code_marks(text: &str) -> String {
+    static CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`\n]+)`").unwrap());
+    CODE.replace_all(text, format!("{CODE_OPEN}$1{CODE_CLOSE}"))
+        .replace('`', "")
+}
+
+/// Turns the marks from `code_marks` into <code> elements, closing a span a
+/// clip cut open at either end.
+fn code_spans(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() + 16);
+    let mut open = false;
+    for c in html.chars() {
+        match c {
+            CODE_OPEN if !open => {
+                out.push_str("<code>");
+                open = true;
+            }
+            CODE_CLOSE if open => {
+                out.push_str("</code>");
+                open = false;
+            }
+            // A close with no open: the clip removed the start of the span.
+            CODE_CLOSE => {
+                let at = if out.starts_with('…') { '…'.len_utf8() } else { 0 };
+                out.insert_str(at, "<code>");
+                out.push_str("</code>");
+            }
+            CODE_OPEN => {}
+            _ => out.push(c),
+        }
+    }
+    if open {
+        out.push_str("</code>");
+    }
+    out
+}
+
 /// Renders new bullet summaries while keeping existing prose summaries readable.
 fn summary_html(text: &str, terms: &[String]) -> String {
     let lines: Vec<&str> = text
@@ -532,12 +626,35 @@ fn summary_html(text: &str, terms: &[String]) -> String {
     if !lines.is_empty() && lines.iter().all(|l| l.starts_with("- ")) {
         let items: String = lines
             .iter()
-            .map(|l| format!("<li>{}</li>", highlight(&l[2..], terms, None).0))
+            .map(|l| format!("<li>{}</li>", code_spans(&highlight(&code_marks(&l[2..]), terms, None).0)))
             .collect();
         format!("<ul>{items}</ul>")
     } else {
-        highlight(text, terms, None).0
+        code_spans(&highlight(&code_marks(text), terms, None).0)
     }
+}
+
+/// The summary under a result: whole bullets up to `budget` bytes, so the list
+/// never ends on a fragment. A long first bullet or a prose summary is clipped.
+fn blurb_html(text: &str, terms: &[String], budget: usize) -> String {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.is_empty() || !lines.iter().all(|l| l.starts_with("- ")) {
+        return summary_html(&crate::model::clip_chars(text, budget), terms);
+    }
+    let mut kept = vec![];
+    let mut used = 0;
+    for l in &lines {
+        if !kept.is_empty() && used + l.len() > budget {
+            break;
+        }
+        used += l.len();
+        kept.push(crate::model::clip_chars(l, budget));
+    }
+    summary_html(&kept.join("\n"), terms)
 }
 
 fn result_view(
@@ -553,12 +670,18 @@ fn result_view(
         let Some((_, user, assistant)) = texts.get(t) else {
             continue;
         };
-        let (u, uh) = highlight(user, terms, Some(220));
-        let (a, ah) = highlight(assistant, terms, Some(220));
+        let (u, uh) = highlight(&plain_excerpt(user), terms, Some(220));
+        let (a, ah) = highlight(&plain_excerpt(assistant), terms, Some(220));
         let html = if uh >= ah && !user.is_empty() {
-            format!("<span class=\"who\">You</span> {u}")
+            format!("<span class=\"who\">You</span> {}", code_spans(&u))
         } else {
-            format!("<span class=\"who\">{}</span> {a}", agent_name(&s.source))
+            format!(
+                "<span class=\"who logo {}\" role=\"img\" aria-label=\"{}\" title=\"{}\"></span> {}",
+                if s.source == "claude" { "claude" } else { "codex" },
+                agent_name(&s.source),
+                agent_name(&s.source),
+                code_spans(&a)
+            )
         };
         if !snippets.contains(&html) {
             snippets.push(html);
@@ -571,17 +694,21 @@ fn result_view(
         .summary
         .as_deref()
         .or(s.recap.as_deref())
-        .map(|b| summary_html(&crate::model::clip_chars(b, 320), terms));
+        // Matching excerpts already explain the result, so the summary shrinks.
+        .map(|b| blurb_html(b, terms, if snippets.is_empty() { 320 } else { 180 }));
     let qs = if q.is_empty() {
         String::new()
     } else {
         format!("?q={}", enc(q))
     };
+    // Hits are ranked by score; open the session at the earliest one.
     let anchor = h
         .turns
-        .first()
-        .and_then(|t| texts.get(t))
-        .map(|(idx, _, _)| format!("#t{idx}"))
+        .iter()
+        .filter_map(|t| texts.get(t))
+        .map(|(idx, _, _)| *idx)
+        .min()
+        .map(|idx| format!("#t{idx}"))
         .unwrap_or_default();
     let mut chips = chips_for(cat, s);
     let (time_hit, notes) = place_reasons(&h.reasons, &mut chips);
@@ -608,6 +735,15 @@ fn result_view(
             .is_some_and(|c| !std::path::Path::new(c).exists()),
         session_id: s.id.clone(),
     })
+}
+
+/// The product name, used where agents are filtered rather than quoted.
+fn agent_product(source: &str) -> &'static str {
+    if source == "claude" {
+        "Claude Code"
+    } else {
+        "Codex"
+    }
 }
 
 pub fn agent_name(source: &str) -> &'static str {
@@ -656,6 +792,7 @@ fn facets(cat: &Catalog, p: &Params, hits: &[Hit]) -> Vec<FacetGroup> {
         href: p.url("/", Some((k, v))),
         hx_href: p.url("/search", Some((k, v))),
         active: active(k, v),
+        logo: "",
     };
     let mut groups = vec![];
     let mut push = |name: &'static str, mut items: Vec<FacetItem>| {
@@ -669,7 +806,10 @@ fn facets(cat: &Catalog, p: &Params, hits: &[Hit]) -> Vec<FacetGroup> {
         "Agent",
         agent
             .into_iter()
-            .map(|(k, n)| item("agent", &k, agent_name(&k).to_string(), n))
+            .map(|(k, n)| FacetItem {
+                logo: if k == "claude" { "claude" } else { "codex" },
+                ..item("agent", &k, agent_product(&k).to_string(), n)
+            })
             .collect(),
     );
     push("Repo", {
@@ -728,7 +868,8 @@ fn render_results(
     let shown: Vec<&Hit> = res.hits.iter().take(25).collect();
     let ids: Vec<i64> = shown
         .iter()
-        .flat_map(|h| h.turns.iter().take(3).copied())
+        // All hit turns, not just the excerpted ones, so the link can open at the earliest.
+        .flat_map(|h| h.turns.iter().copied())
         .collect();
     let texts = crate::store::turn_texts(&c, &ids)?;
     let pq = e.parse(&p.full_query());
@@ -748,18 +889,21 @@ fn render_results(
         }
     }
     let status = match res.stage {
-        "entity" => "Sorted by newest".into(),
-        _ if p.is_empty() => format!("{} recent sessions", results.len()),
-        "keyword" => format!("{} results · reranking…", res.total),
+        "entity" => "Newest first".into(),
+        _ if p.is_empty() => format!("{} most recent sessions", results.len()),
+        "keyword" => format!(
+            "{} sessions with matching words. Ranking by meaning…",
+            res.total
+        ),
         "refined" => {
             let terms = res
                 .rewrite
                 .as_ref()
                 .map(|r| r.terms.join(", "))
                 .unwrap_or_default();
-            format!("{} results · + {terms}", res.total)
+            format!("{} sessions, ranked. Also searched for: {terms}", res.total)
         }
-        _ => format!("{} results · {} ms", res.total, res.took_ms),
+        _ => format!("{} sessions, ranked in {} ms", res.total, res.took_ms),
     };
     let hidden = p
         .filters()
@@ -770,13 +914,13 @@ fn render_results(
         .filters()
         .into_iter()
         .map(|(k, v)| {
-            let label = if k == "repo" {
-                crate::extract::repo_display(v)
-            } else {
-                v.to_string()
+            let label = match k {
+                "repo" => crate::extract::repo_display(v),
+                "agent" => agent_product(v).to_string(),
+                _ => v.to_string(),
             };
             FilterChip {
-                label: format!("{k}:{label}"),
+                label: format!("{k}: {label}"),
                 href: p.url("/", Some((k, v))),
                 hx_href: p.url("/search", Some((k, v))),
             }
@@ -792,9 +936,9 @@ fn render_results(
         active,
         empty_hint: results.is_empty().then(|| {
             if p.filters().is_empty() {
-                "No matching sessions.".into()
+                "No session matches. Try fewer or different words, or describe what the session was about.".into()
             } else {
-                "No matching sessions for active filters.".into()
+                "No session matches with these filters. Remove a filter to search wider.".into()
             }
         }),
         results,
@@ -1427,6 +1571,29 @@ mod tests {
     }
 
     #[test]
+    fn excerpts_drop_markdown_noise() {
+        let text = "### Plan\nKeep **walking**, see [the notes](</tmp/a b.md>) and `cargo test`.";
+        let html = code_spans(&highlight(&plain_excerpt(text), &[], None).0);
+        assert_eq!(
+            html,
+            "Plan\nKeep walking, see the notes and <code>cargo test</code>."
+        );
+        // Clipped inside a span at either end: the cut span stays code.
+        let mid = code_spans(&highlight(&plain_excerpt("ab `cd ef` gh `ij kl`"), &[], None).0);
+        assert_eq!(mid, "ab <code>cd ef</code> gh <code>ij kl</code>");
+        let cut = format!("cd{CODE_CLOSE} gh {CODE_OPEN}ij");
+        assert_eq!(code_spans(&cut), "<code>cd</code> gh <code>ij</code>");
+    }
+
+    #[test]
+    fn blurb_keeps_whole_bullets() {
+        let html = blurb_html("- one two\n- three four\n- five six", &[], 22);
+        assert_eq!(html, "<ul><li>one two</li><li>three four</li></ul>");
+        let html = blurb_html("- a very long first bullet", &[], 8);
+        assert!(html.starts_with("<ul><li>a very…"), "{html}");
+    }
+
+    #[test]
     fn highlight_marks_word_starts_and_escapes() {
         let terms = highlight_terms("fixed ordering <b>", &[]);
         let (h, n) = highlight("Fix the <ordering> bug; reorder later", &terms, None);
@@ -1488,6 +1655,7 @@ mod tests {
             title: String::new(),
             github: None,
             hit: false,
+            line: 0,
         };
         let mut chips = vec![
             chip("chip repo", "widgets"),
