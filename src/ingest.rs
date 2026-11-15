@@ -6,7 +6,7 @@
 //! the archive as the original grows. Changed files are reparsed whole, which
 //! takes milliseconds even for large sessions and keeps turn grouping simple.
 
-use crate::config::{Config, data_dir};
+use crate::config::Config;
 use crate::extract;
 use crate::model::{Fact, ParsedSession};
 use crate::util::{count, hash};
@@ -26,10 +26,6 @@ pub struct Stats {
     pub bad_lines: usize,
     /// One line per stored session, such as `repo "title" +3 turns`, for logs.
     pub updated: Vec<String>,
-}
-
-pub fn archive_root() -> PathBuf {
-    data_dir().join("archive")
 }
 
 /// Source files: (source, absolute path, path relative to the source root).
@@ -105,15 +101,17 @@ fn sync_archive(
 
 pub struct Ingester<'a> {
     cfg: &'a Config,
+    archive: PathBuf,
     host: String,
     tickets: Vec<Regex>,
     worktrees: Vec<Regex>,
 }
 
 impl<'a> Ingester<'a> {
-    pub fn new(cfg: &'a Config) -> Self {
+    pub fn new(cfg: &'a Config, archive: PathBuf) -> Self {
         Self {
             cfg,
+            archive,
             host: gethostname::gethostname().to_string_lossy().into_owned(),
             tickets: extract::compile(&cfg.ticket_patterns),
             worktrees: extract::compile(&cfg.worktree_patterns),
@@ -149,7 +147,7 @@ impl<'a> Ingester<'a> {
             if !rebuild && old.is_some_and(|o| o.0 == size && o.1 == mtime && o.2 == inode) {
                 continue;
             }
-            let dst = archive_root().join(source).join(&rel);
+            let dst = self.archive.join(source).join(&rel);
             let prefix = prefix_hash(&src)?;
             // A different inode means the file was replaced, so copy it whole.
             let prev = old.filter(|o| o.2 == inode).map(|o| (o.0, o.3.clone()));
