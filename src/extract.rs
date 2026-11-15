@@ -74,6 +74,12 @@ re!(
     WORKTREE_ADD,
     r"git worktree add\s+(?:-[fqB]\s+)*(?:-b\s+(\S+)\s+)?(\S+)(?:\s+(?:-b\s+(\S+)))?"
 );
+// Push and remote output is only trusted from the command that prints it:
+// the same text in a file read or a grep is a mention, not a push.
+re!(GIT_PUSH, r"\bgit(?:\s+-[cC]\s+\S+)*\s+push\b");
+re!(GIT_REMOTE, r"\bgit(?:\s+-[cC]\s+\S+)*\s+remote\b");
+// A command that runs `gh` itself, not one that only mentions it (`grep "gh pr"`).
+re!(GH_CMD, r"(?m)(?:^|&&|;|\|\|)\s*gh\s");
 re!(GH_PR_CREATE, r"gh pr create");
 re!(GH_PR_MERGE, r"gh pr merge\s+(\d+)?");
 re!(SHA, r"\b[0-9a-f]{40}\b");
@@ -101,10 +107,7 @@ pub fn extract(s: &ParsedSession, cfg: &Config, tickets: &[Regex]) -> Vec<Fact> 
         if let Some(c) = &turn.cwd {
             add(&mut facts, Fact::new("worktree", c, c, "recorded", 1));
         }
-        let mut text_blobs: Vec<&str> = vec![&turn.user, &turn.assistant];
         for tc in &turn.tools {
-            text_blobs.push(&tc.input);
-            text_blobs.push(&tc.output);
             for f in &tc.files {
                 add(
                     &mut facts,
@@ -114,6 +117,12 @@ pub fn extract(s: &ParsedSession, cfg: &Config, tickets: &[Regex]) -> Vec<Fact> 
             let cmd = tc.input.as_str();
             let out = tc.output.as_str();
             let ok = !tc.is_error;
+            // GitHub's own listings (`gh pr list`, `gh run list`) name real PRs.
+            if GH_CMD.is_match(cmd) {
+                for c in PR_URL.captures_iter(out) {
+                    add(&mut facts, pr_fact(&c, 1));
+                }
+            }
             if GH_PR_CREATE.is_match(cmd) && ok {
                 for c in PR_URL.captures_iter(out) {
                     add(&mut facts, pr_fact(&c, 4));
@@ -128,25 +137,29 @@ pub fn extract(s: &ParsedSession, cfg: &Config, tickets: &[Regex]) -> Vec<Fact> 
                     Fact::new("merged", n.as_str(), n.as_str(), "parsed", 1),
                 );
             }
-            for c in PR_NEW.captures_iter(out) {
-                let repo = format!("github.com/{}/{}", &c[1], &c[2]).to_lowercase();
-                add(
-                    &mut facts,
-                    Fact::new("repo", repo.clone(), repo_display(&repo), "parsed", 3),
-                );
-                add(&mut facts, Fact::new("pushed", &c[3], &c[3], "parsed", 2));
-            }
-            for c in PUSH_TO.captures_iter(out) {
-                repo_from(&mut facts, &c[1], 3);
+            if GIT_PUSH.is_match(cmd) {
+                for c in PR_NEW.captures_iter(out) {
+                    let repo = format!("github.com/{}/{}", &c[1], &c[2]).to_lowercase();
+                    add(
+                        &mut facts,
+                        Fact::new("repo", repo.clone(), repo_display(&repo), "parsed", 3),
+                    );
+                    add(&mut facts, Fact::new("pushed", &c[3], &c[3], "parsed", 2));
+                }
+                for c in PUSH_TO.captures_iter(out) {
+                    repo_from(&mut facts, &c[1], 3);
+                }
+                for c in NEW_BRANCH.captures_iter(out) {
+                    add(&mut facts, Fact::new("branch", &c[1], &c[1], "parsed", 1));
+                }
             }
             for c in CLONE.captures_iter(cmd) {
                 repo_from(&mut facts, &c[1], 1);
             }
-            for c in REMOTE_V.captures_iter(out) {
-                repo_from(&mut facts, &c[1], 2);
-            }
-            for c in NEW_BRANCH.captures_iter(out) {
-                add(&mut facts, Fact::new("branch", &c[1], &c[1], "parsed", 1));
+            if GIT_REMOTE.is_match(cmd) {
+                for c in REMOTE_V.captures_iter(out) {
+                    repo_from(&mut facts, &c[1], 2);
+                }
             }
             for c in ON_BRANCH.captures_iter(out) {
                 add(&mut facts, Fact::new("branch", &c[1], &c[1], "parsed", 1));
@@ -186,7 +199,9 @@ pub fn extract(s: &ParsedSession, cfg: &Config, tickets: &[Regex]) -> Vec<Fact> 
                 );
             }
         }
-        for blob in text_blobs {
+        // Other mentions only from the conversation itself: file contents, diffs
+        // and search results carry fixture and example URLs that aren't real PRs.
+        for blob in [&turn.user, &turn.assistant] {
             for c in PR_URL.captures_iter(blob) {
                 add(&mut facts, pr_fact(&c, 1));
             }
@@ -391,6 +406,43 @@ mod tests {
         assert_eq!(has("pr", "acme/widgets#42").unwrap().strength, 4);
         assert!(has("ticket", "ABC-123").is_some());
         assert!(has("ticket", "UTF-8").is_none());
+    }
+
+    #[test]
+    fn gh_listings_mention_prs() {
+        let mut s = ParsedSession::default();
+        s.turns.push(crate::model::Turn {
+            tools: vec![crate::model::ToolCall {
+                input: "cd app && gh pr list --json url".into(),
+                output: r#"[{"url":"https://github.com/owner/app/pull/7"}]"#.into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let cfg = Config::default();
+        let f = extract(&s, &cfg, &compile(&cfg.ticket_patterns));
+        let pr = f.iter().find(|x| x.kind == "pr").expect("pr");
+        assert_eq!((pr.key.as_str(), pr.strength), ("owner/app#7", 1));
+    }
+
+    #[test]
+    fn tool_text_does_not_name_repos_or_prs() {
+        let mut s = ParsedSession::default();
+        s.turns.push(crate::model::Turn {
+            tools: vec![crate::model::ToolCall {
+                input: "grep -r 'gh pr' tests/".into(),
+                output: "tests/push.txt:remote:      https://github.com/acme/widgets/pull/new/fix-order\nTo github.com:acme/widgets.git\n * [new branch]      fix-order -> fix-order\norigin  git@github.com:acme/widgets.git (fetch)\ntests/pr.txt:https://github.com/acme/widgets/pull/42".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let cfg = Config::default();
+        let f = extract(&s, &cfg, &compile(&cfg.ticket_patterns));
+        assert!(
+            f.iter()
+                .all(|x| !matches!(x.kind, "repo" | "pushed" | "pr")),
+            "{f:?}"
+        );
     }
 
     #[test]
