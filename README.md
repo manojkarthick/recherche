@@ -164,5 +164,10 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
+To try UI changes or take screenshots without your own sessions, run
+`cargo run -- demo`. It serves made-up Claude Code and Codex sessions from
+[`demo/sessions/`](demo/) on <http://127.0.0.1:7778>, where each file is one
+session; see [demo/README.md](demo/README.md) to add more.
+
 Tests do not require session data, model downloads, or an API key. Building the
 dependencies can still require network access, including for ONNX Runtime.

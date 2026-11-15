@@ -1,0 +1,22 @@
+agent = "claude"
+cwd = "code/dotfiles"
+branch = "main"
+ago = "65d7h"
+title = "Tmux clipboard over SSH"
+
+[[turns]]
+prompt = "copy in tmux doesn't reach my mac clipboard when I'm ssh'd in"
+reply = "tmux needs to pass OSC 52 through. I set `set -g set-clipboard on` and added `allow-passthrough on`; your terminal already accepts OSC 52."
+
+[[turns.tools]]
+name = "Edit"
+input = { file_path = "{root}/code/dotfiles/tmux/tmux.conf" }
+output = "The file has been updated."
+
+[summary]
+title = "Make tmux copy reach the local clipboard over SSH"
+summary = '''
+- Enabled OSC 52 in tmux with `set-clipboard on` and `allow-passthrough on`.'''
+kind = "ops"
+outcome = "fixed"
+tags = ["tmux", "ssh", "clipboard"]

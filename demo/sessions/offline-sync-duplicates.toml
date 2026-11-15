@@ -1,0 +1,34 @@
+# A recent Codex session with a failing then passing test run.
+agent = "codex"
+cwd = "code/notebook"
+repo = "lumen/notebook"
+branch = "feat/offline-sync"
+ago = "5h"
+
+[[turns]]
+prompt = "why does offline sync duplicate notes when two devices reconnect at the same time"
+reply = "Both devices replay their queue against the same base revision. The server accepts both because `If-Match` is checked against the note, not the queue entry. I added a revision check to `apply_queue`."
+
+[[turns.tools]]
+command = "pnpm test -- sync"
+error = true
+output = '''
+FAIL src/sync/queue.test.ts
+  ● applyQueue › rejects stale revisions
+    expect(received).toBe(expected)
+    Expected: 409
+    Received: 200'''
+
+[[turns.tools]]
+command = "pnpm test -- sync"
+output = "PASS src/sync/queue.test.ts (14 tests)"
+
+[[turns]]
+prompt = "commit that"
+reply = "Committed on feat/offline-sync."
+
+[[turns.tools]]
+command = "git commit -am 'fix(sync): reject stale queue entries'"
+output = '''
+[feat/offline-sync 3e1a9c2] fix(sync): reject stale queue entries
+ 2 files changed, 41 insertions(+), 6 deletions(-)'''

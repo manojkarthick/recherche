@@ -1,0 +1,25 @@
+agent = "claude"
+cwd = "code/billing-api"
+branch = "chore/upgrade-postgres-16"
+ago = "29d3h"
+title = "Upgrade Postgres to 16 in docker-compose"
+
+[[turns]]
+prompt = "bump postgres to 16 in the compose file and check the migrations still run"
+reply = "Bumped the image to `postgres:16-alpine`. All 58 migrations apply cleanly; `0042_money_type` warned about the deprecated `money` cast, which still works."
+
+[[turns.tools]]
+command = "docker compose up -d db && make migrate"
+output = '''
+Applying 0001_init ... ok
+Applying 0042_money_type ... WARNING:  casting to money is deprecated
+Applying 0058_invoice_notes ... ok'''
+
+[summary]
+title = "Upgrade local Postgres to 16"
+summary = '''
+- Bumped docker-compose to `postgres:16-alpine`.
+- All 58 migrations apply; 0042 warns about the deprecated `money` cast.'''
+kind = "migration"
+outcome = "shipped"
+tags = ["postgres", "docker"]

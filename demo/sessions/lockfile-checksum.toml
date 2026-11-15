@@ -1,0 +1,84 @@
+# Content that is hard to lay out: a long URL, an unbroken hash, emoji, CJK
+# text and long failing tool output.
+agent = "claude"
+cwd = "code/widgets"
+branch = "chore/deps"
+ago = "9d"
+title = "Lockfile checksum mismatch after dependency bump"
+
+[[turns]]
+prompt = "the build log says https://ci.example.com/acme/widgets/actions/runs/1234567890/job/9876543210?check_suite_focus=true&pr=422&very_long_query_param=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa failed 😩 — 依存関係の更新 broke something"
+reply = '''
+The failure is in the lockfile: `sha512-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGhIjKlMnOpQrStUvWxYz==` no longer matches.
+
+```
+ERR_PNPM_TARBALL_INTEGRITY  Got unexpected checksum for "https://registry.npmjs.org/@acme/some-really-long-package-name-for-testing-wrapping/-/some-really-long-package-name-for-testing-wrapping-4.2.1.tgz". Wanted "sha512-AAAA". Got "sha512-BBBB".
+```
+
+Regenerating the lockfile fixes it.'''
+
+[[turns.tools]]
+command = "pnpm install --frozen-lockfile 2>&1 | tail -60"
+error = true
+output = '''
+ ERR_PNPM_TARBALL_INTEGRITY  line 0: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.0
+ ERR_PNPM_TARBALL_INTEGRITY  line 1: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.1
+ ERR_PNPM_TARBALL_INTEGRITY  line 2: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.2
+ ERR_PNPM_TARBALL_INTEGRITY  line 3: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.3
+ ERR_PNPM_TARBALL_INTEGRITY  line 4: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.4
+ ERR_PNPM_TARBALL_INTEGRITY  line 5: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.5
+ ERR_PNPM_TARBALL_INTEGRITY  line 6: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.6
+ ERR_PNPM_TARBALL_INTEGRITY  line 7: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.7
+ ERR_PNPM_TARBALL_INTEGRITY  line 8: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.8
+ ERR_PNPM_TARBALL_INTEGRITY  line 9: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.9
+ ERR_PNPM_TARBALL_INTEGRITY  line 10: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.10
+ ERR_PNPM_TARBALL_INTEGRITY  line 11: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.11
+ ERR_PNPM_TARBALL_INTEGRITY  line 12: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.12
+ ERR_PNPM_TARBALL_INTEGRITY  line 13: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.13
+ ERR_PNPM_TARBALL_INTEGRITY  line 14: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.14
+ ERR_PNPM_TARBALL_INTEGRITY  line 15: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.15
+ ERR_PNPM_TARBALL_INTEGRITY  line 16: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.16
+ ERR_PNPM_TARBALL_INTEGRITY  line 17: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.17
+ ERR_PNPM_TARBALL_INTEGRITY  line 18: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.18
+ ERR_PNPM_TARBALL_INTEGRITY  line 19: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.19
+ ERR_PNPM_TARBALL_INTEGRITY  line 20: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.20
+ ERR_PNPM_TARBALL_INTEGRITY  line 21: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.21
+ ERR_PNPM_TARBALL_INTEGRITY  line 22: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.22
+ ERR_PNPM_TARBALL_INTEGRITY  line 23: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.23
+ ERR_PNPM_TARBALL_INTEGRITY  line 24: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.24
+ ERR_PNPM_TARBALL_INTEGRITY  line 25: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.25
+ ERR_PNPM_TARBALL_INTEGRITY  line 26: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.26
+ ERR_PNPM_TARBALL_INTEGRITY  line 27: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.27
+ ERR_PNPM_TARBALL_INTEGRITY  line 28: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.28
+ ERR_PNPM_TARBALL_INTEGRITY  line 29: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.29
+ ERR_PNPM_TARBALL_INTEGRITY  line 30: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.30
+ ERR_PNPM_TARBALL_INTEGRITY  line 31: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.31
+ ERR_PNPM_TARBALL_INTEGRITY  line 32: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.32
+ ERR_PNPM_TARBALL_INTEGRITY  line 33: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.33
+ ERR_PNPM_TARBALL_INTEGRITY  line 34: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.34
+ ERR_PNPM_TARBALL_INTEGRITY  line 35: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.35
+ ERR_PNPM_TARBALL_INTEGRITY  line 36: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.36
+ ERR_PNPM_TARBALL_INTEGRITY  line 37: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.37
+ ERR_PNPM_TARBALL_INTEGRITY  line 38: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.38
+ ERR_PNPM_TARBALL_INTEGRITY  line 39: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.39
+ ERR_PNPM_TARBALL_INTEGRITY  line 40: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.40
+ ERR_PNPM_TARBALL_INTEGRITY  line 41: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.41
+ ERR_PNPM_TARBALL_INTEGRITY  line 42: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.42
+ ERR_PNPM_TARBALL_INTEGRITY  line 43: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.43
+ ERR_PNPM_TARBALL_INTEGRITY  line 44: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.44
+ ERR_PNPM_TARBALL_INTEGRITY  line 45: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.45
+ ERR_PNPM_TARBALL_INTEGRITY  line 46: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.46
+ ERR_PNPM_TARBALL_INTEGRITY  line 47: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.47
+ ERR_PNPM_TARBALL_INTEGRITY  line 48: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.48
+ ERR_PNPM_TARBALL_INTEGRITY  line 49: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.49
+ ERR_PNPM_TARBALL_INTEGRITY  line 50: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.50
+ ERR_PNPM_TARBALL_INTEGRITY  line 51: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.51
+ ERR_PNPM_TARBALL_INTEGRITY  line 52: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.52
+ ERR_PNPM_TARBALL_INTEGRITY  line 53: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.53
+ ERR_PNPM_TARBALL_INTEGRITY  line 54: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.54
+ ERR_PNPM_TARBALL_INTEGRITY  line 55: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.55
+ ERR_PNPM_TARBALL_INTEGRITY  line 56: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.56
+ ERR_PNPM_TARBALL_INTEGRITY  line 57: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.57
+ ERR_PNPM_TARBALL_INTEGRITY  line 58: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.58
+ ERR_PNPM_TARBALL_INTEGRITY  line 59: checksum mismatch for @acme/some-really-long-package-name-for-testing-wrapping@4.2.59
+'''

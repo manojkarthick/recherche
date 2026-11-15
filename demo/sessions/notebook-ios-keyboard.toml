@@ -1,0 +1,13 @@
+agent = "codex"
+cwd = "code/notebook"
+repo = "lumen/notebook"
+branch = "fix/ios-keyboard-overlap"
+ago = "101d11h"
+
+[[turns]]
+prompt = "on iPhone the keyboard covers the last lines of the note editor"
+reply = "The editor sizes itself with `100vh`, which ignores the keyboard on iOS. It now uses the `visualViewport` height and scrolls the caret into view on resize."
+
+[[turns.tools]]
+command = "pnpm test -- editor"
+output = "PASS src/editor/viewport.test.ts (4 tests)"

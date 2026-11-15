@@ -180,6 +180,7 @@ For backup and retention guidance, see [local data](configuration.md#local-data-
 | [`src/web.rs`](../src/web.rs), [`templates/`](../templates/), [`assets/`](../assets/) | HTTP routes, HTML views, result streams, embedded browser assets |
 | [`src/api.rs`](../src/api.rs) | JSON API for search, sessions, transcripts, and entity navigation; shares the server's engine and authentication |
 | [`src/eval.rs`](../src/eval.rs) | Labeled-query and feedback evaluation |
+| [`src/demo.rs`](../src/demo.rs), [`demo/`](../demo/) | Hidden `demo` command: made-up sessions for UI work and screenshots |
 
 For a first code walkthrough, follow `main.rs` → `search.rs` → `ingest.rs` for
 import, then `query.rs` → `search.rs` for retrieval. There is no public Rust

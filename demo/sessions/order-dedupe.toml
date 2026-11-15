@@ -1,0 +1,105 @@
+# A worktree that no longer exists, so results warn that the directory is
+# gone. Covers a Markdown reply, a failing test, a push and a PR link.
+agent = "claude"
+cwd = "code/widgets/.claude/worktrees/fix-order-dedupe"
+cwd_gone = true
+branch = "fix/WID-1182-order-dedupe-same-timestamp"
+ago = "1d3h"
+title = "Fix order dedupe for rows sharing a timestamp"
+pr = "acme/widgets#418"
+
+[[turns]]
+prompt = "Orders with the same created_at come back in the wrong order after the nightly merge. WID-1182. Can you find out why?"
+reply = "Let me look at the merge code first."
+
+[[turns.tools]]
+name = "Grep"
+input = { pattern = "fn merge_batches", path = "src" }
+output = "src/ingest/merge.rs:41:pub fn merge_batches(batches: Vec<Batch>) -> Vec<Row> {"
+
+[[turns.tools]]
+name = "Read"
+input = { file_path = "{root}/code/widgets/.claude/worktrees/fix-order-dedupe/src/ingest/merge.rs" }
+output = '''
+41 pub fn merge_batches(batches: Vec<Batch>) -> Vec<Row> {
+42     let mut rows = dedupe(batches);
+43     rows.sort_by_key(|r| r.created_at);
+44     rows
+45 }'''
+
+[[turns.tools]]
+command = "cargo test -p ingest merge"
+error = true
+output = '''
+running 6 tests
+test merge::tests::same_timestamp ... FAILED
+
+failures:
+---- merge::tests::same_timestamp stdout ----
+assertion `left == right` failed
+  left: [Row { order_id: 7, seq: 1 }]
+ right: [Row { order_id: 7, seq: 2 }]'''
+
+[[turns]]
+prompt = "ok fix it and add a test"
+reply = '''
+Found it. The ordering bug comes from `merge_batches()` sorting by `created_at` **after** deduplication, so two rows with the same timestamp keep whichever batch arrived first.
+
+## What changed
+
+1. Sort by `(created_at, seq)` before deduplicating.
+2. Keep the *latest* row per `order_id` instead of the first.
+3. Added a regression test with two rows that share a timestamp.
+
+| Case | Before | After |
+| --- | --- | --- |
+| Same timestamp, two batches | first batch wins | highest `seq` wins |
+| Out-of-order arrival | sorted late | sorted before dedupe |
+| Empty batch | panics on `unwrap()` | returns `[]` |
+
+```rust
+let mut rows: Vec<Row> = batches.into_iter().flatten().collect();
+rows.sort_by_key(|r| (r.created_at, r.seq));
+rows.reverse();
+rows.dedup_by(|a, b| a.order_id == b.order_id);
+rows.reverse();
+```
+
+> Note: `dedup_by` keeps the *first* of each run, so the vector is reversed before and after.
+
+Tests pass: `cargo test -p ingest` → 48 passed. Anything else on this branch?'''
+
+[[turns.tools]]
+name = "Edit"
+input = { file_path = "{root}/code/widgets/.claude/worktrees/fix-order-dedupe/src/ingest/merge.rs" }
+output = "The file has been updated."
+
+[[turns.tools]]
+command = "cargo test -p ingest"
+output = "test result: ok. 48 passed; 0 failed; 0 ignored"
+
+[[turns]]
+prompt = "push it and open a PR"
+reply = "Pushed and opened acme/widgets#418."
+
+[[turns.tools]]
+command = "git push -u origin fix/WID-1182-order-dedupe-same-timestamp"
+output = '''
+remote: Create a pull request for 'fix/WID-1182-order-dedupe-same-timestamp' on GitHub by visiting:
+remote:      https://github.com/acme/widgets/pull/new/fix/WID-1182-order-dedupe-same-timestamp
+To github.com:acme/widgets.git
+ * [new branch]      fix/WID-1182-order-dedupe-same-timestamp -> fix/WID-1182-order-dedupe-same-timestamp'''
+
+[[turns.tools]]
+command = "gh pr create --fill"
+output = "https://github.com/acme/widgets/pull/418"
+
+[summary]
+title = "Fix order dedupe for rows sharing a timestamp"
+summary = '''
+- Nightly merge sorted rows after deduplicating, so the first batch won when two rows shared `created_at`.
+- Sorted by `(created_at, seq)` before dedupe and kept the latest row per `order_id`.
+- Added a regression test; opened acme/widgets#418.'''
+kind = "bugfix"
+outcome = "fixed"
+tags = ["ordering", "dedupe", "merge"]

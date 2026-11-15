@@ -1,0 +1,22 @@
+agent = "claude"
+cwd = "code/widgets"
+branch = "refactor/split-report-module"
+ago = "83d9h"
+title = "Split report module into smaller files"
+
+[[turns]]
+prompt = "report.rs is 2400 lines, split it up without changing behavior"
+reply = "Started splitting into `report/{query,render,export}.rs`, but `render` and `query` share a 600-line private state struct. Splitting cleanly needs that struct redesigned first."
+
+[[turns]]
+prompt = "ok let's drop this for now"
+reply = "Reverted the branch to main. The notes on the shared state are in the PR description draft."
+
+[summary]
+title = "Attempt to split the 2400-line report module"
+summary = '''
+- Tried splitting report.rs into query, render and export modules.
+- Stopped because render and query share a large private state struct.'''
+kind = "refactor"
+outcome = "abandoned"
+tags = ["refactor", "reports"]

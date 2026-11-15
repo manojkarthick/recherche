@@ -2,7 +2,7 @@
 //! digest, not the full transcript, and again only after it grows a lot.
 
 use crate::config::Config;
-use crate::llm::Llm;
+use crate::llm::{Llm, Summary};
 use crate::model::clip_chars;
 use crate::store;
 use anyhow::Result;
@@ -195,6 +195,16 @@ pub fn digest(c: &Connection, id: &str) -> Result<String> {
     Ok(out)
 }
 
+/// Stores a summary written from the session's first `turns` turns. The next
+/// index pass picks it up.
+pub fn save(c: &Connection, id: &str, s: &Summary, turns: i64) -> Result<()> {
+    c.execute(
+        "UPDATE sessions SET summary = ?, llm_title = ?, kind = ?, outcome = ?, tags = ?, summary_turns = ?, dirty = 1 WHERE id = ?",
+        params![s.summary, s.title, s.kind, s.outcome, s.tags.join(", "), turns, id],
+    )?;
+    Ok(())
+}
+
 /// Summarizes up to `limit` candidates. Stops on the first API failure, because the next call would most likely fail the same way.
 /// With `progress`, prints one line per session to stderr (for the CLI).
 pub async fn run(
@@ -235,11 +245,7 @@ pub async fn run(
                         i + 1
                     );
                 }
-                let c = store::open(db)?;
-                c.execute(
-                    "UPDATE sessions SET summary = ?, llm_title = ?, kind = ?, outcome = ?, tags = ?, summary_turns = ?, dirty = 1 WHERE id = ?",
-                    params![s.summary, s.title, s.kind, s.outcome, s.tags.join(", "), cand.turns, cand.id],
-                )?;
+                save(&store::open(db)?, &cand.id, &s, cand.turns)?;
                 n += 1;
             }
             Err(e) => {

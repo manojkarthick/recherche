@@ -1,0 +1,23 @@
+# A summary title long enough to wrap in the result list.
+agent = "claude"
+cwd = "code/widgets"
+branch = "feat/WID-1240-report-scheduling"
+ago = "6d2h"
+title = "Schedule weekly report emails"
+
+[[turns]]
+prompt = "WID-1240: let people schedule the weekly report to be emailed, with their timezone respected and a way to pause it"
+reply = "Added a schedule per report (weekday, hour, timezone) and a pause toggle. A worker checks due schedules every minute and renders the report as of the scheduled time, so a late run still sends last week's numbers."
+
+[[turns.tools]]
+command = "cargo test -p reports schedule"
+output = "test result: ok. 17 passed; 0 failed; 0 ignored"
+
+[summary]
+title = "Let report owners schedule weekly report emails in their own timezone, pause and resume them, and get the report as of the scheduled time even when the worker runs late"
+summary = '''
+- Added per-report schedules with weekday, hour and timezone, plus a pause toggle (WID-1240).
+- A worker sends due reports every minute, rendered as of the scheduled time.'''
+kind = "feature"
+outcome = "shipped"
+tags = ["reports", "email", "scheduling"]

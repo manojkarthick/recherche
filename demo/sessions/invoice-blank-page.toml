@@ -1,0 +1,13 @@
+# No title and no summary: the title is the first prompt, cut short.
+agent = "claude"
+cwd = "code/billing-api"
+branch = "main"
+ago = "3d5h"
+
+[[turns]]
+prompt = "I need to understand why the invoice PDF renderer sometimes produces a blank second page when the line items table is exactly as tall as the remaining space on the first page, and whether we should switch from the hand-rolled pagination to the layout engine's built-in page breaking which apparently handles widows and orphans now"
+reply = "The blank page comes from the footer reserving 48pt after the table already filled the page. The layout engine's `break-inside: avoid` support would remove the hand-rolled code, but it changes how totals rows split."
+
+[[turns.tools]]
+command = "rg -n 'reserve_footer' src/pdf"
+output = "src/pdf/paginate.rs:112:    let remaining = page.height - cursor - reserve_footer(&doc);"

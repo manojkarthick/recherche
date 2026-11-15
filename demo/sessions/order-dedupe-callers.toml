@@ -1,0 +1,20 @@
+# A subagent of order-dedupe.
+agent = "claude"
+parent = "order-dedupe"
+cwd = "code/widgets/.claude/worktrees/fix-order-dedupe"
+cwd_gone = true
+branch = "fix/WID-1182-order-dedupe-same-timestamp"
+ago = "1d2h50m"
+title = "Check callers of merge_batches"
+
+[[turns]]
+prompt = "Find every caller of merge_batches and report whether any rely on first-wins ordering."
+reply = "Three callers; none rely on first-wins. `nightly_merge` and `backfill` pass sorted input; `replay` passes one batch."
+
+[[turns.tools]]
+name = "Grep"
+input = { pattern = 'merge_batches\(', path = "src" }
+output = '''
+src/jobs/nightly.rs:22
+src/jobs/backfill.rs:58
+src/jobs/replay.rs:13'''
