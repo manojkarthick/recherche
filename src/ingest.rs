@@ -355,22 +355,41 @@ impl<'a> Ingester<'a> {
             st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
                 .collect::<Result<_, _>>()?
         };
-        let mut best: HashMap<String, (String, String)> = HashMap::new();
+        // Every repo tied for the strongest evidence, per session.
+        let mut top: HashMap<String, (i64, String, Vec<String>)> = HashMap::new();
         {
             let mut st = c.prepare(
-                "SELECT session_id, key, origin FROM entities WHERE kind = 'repo' AND strength >= 2 ORDER BY session_id, strength DESC, origin DESC",
+                "SELECT session_id, key, origin, strength FROM entities WHERE kind = 'repo' AND strength >= 2 ORDER BY session_id, strength DESC, origin DESC, key",
             )?;
             for row in st.query_map([], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
                 ))
             })? {
-                let (sid, key, origin) = row?;
-                best.entry(sid).or_insert((key, origin));
+                let (sid, key, origin, strength) = row?;
+                let e = top.entry(sid).or_insert((strength, origin.clone(), vec![]));
+                if e.0 == strength && e.1 == origin {
+                    e.2.push(key);
+                }
             }
         }
+        // A session can open PRs in several repos; the one it ran in is primary.
+        let cwds: HashMap<&str, &str> = sessions
+            .iter()
+            .filter_map(|(sid, cwd, _, _)| Some((sid.as_str(), cwd.as_deref()?)))
+            .collect();
+        let best: HashMap<String, (String, String)> = top
+            .into_iter()
+            .map(|(sid, (_, origin, keys))| {
+                let key =
+                    extract::primary_repo(&keys, cwds.get(sid.as_str()).copied(), &self.worktrees)
+                        .to_string();
+                (sid, (key, origin))
+            })
+            .collect();
         let tx = c.transaction()?;
         for (sid, cwd, _, _) in &sessions {
             if let (Some((key, _)), Some(cwd)) = (best.get(sid), cwd) {

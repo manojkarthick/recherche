@@ -299,6 +299,16 @@ pub fn repo_from_path(cwd: &str, patterns: &[Regex]) -> (String, String) {
     (format!("path:{}", name.to_lowercase()), name.to_string())
 }
 
+/// Picks one repo from several with equally strong evidence: the one named
+/// like the session's directory, else the first.
+pub fn primary_repo<'a>(keys: &'a [String], cwd: Option<&str>, patterns: &[Regex]) -> &'a str {
+    let name = cwd.map(|c| repo_from_path(c, patterns).1.to_lowercase());
+    keys.iter()
+        .find(|k| name.as_deref() == k.rsplit('/').next())
+        .or(keys.first())
+        .map_or("", String::as_str)
+}
+
 pub fn compile(patterns: &[String]) -> Vec<Regex> {
     patterns
         .iter()
@@ -313,6 +323,23 @@ pub fn compile(patterns: &[String]) -> Vec<Regex> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn primary_repo_prefers_the_session_directory() {
+        let keys = vec![
+            "github.com/acme/dotfiles".to_string(),
+            "github.com/acme/widgets".to_string(),
+        ];
+        assert_eq!(
+            primary_repo(&keys, Some("/home/u/code/widgets"), &[]),
+            "github.com/acme/widgets"
+        );
+        assert_eq!(
+            primary_repo(&keys, Some("/home/u/elsewhere"), &[]),
+            "github.com/acme/dotfiles"
+        );
+        assert_eq!(primary_repo(&keys, None, &[]), "github.com/acme/dotfiles");
+    }
 
     #[test]
     fn remotes_normalize_to_one_key() {
