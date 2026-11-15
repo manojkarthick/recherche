@@ -133,6 +133,15 @@ fn split_camel(s: &str) -> Vec<String> {
     parts
 }
 
+/// `1 turn`, `3 turns`.
+pub fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

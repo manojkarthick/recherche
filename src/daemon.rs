@@ -45,6 +45,10 @@ pub fn run(e: Arc<Engine>) {
         .build()
         .expect("tokio runtime");
     let poll = Duration::from_secs(e.cfg.sources.poll_seconds.max(5));
+    tracing::info!(
+        "watching for session changes, polling every {}s",
+        poll.as_secs()
+    );
     let mut last_summary = Instant::now()
         .checked_sub(SUMMARY_EVERY)
         .unwrap_or_else(Instant::now);
@@ -57,7 +61,7 @@ pub fn run(e: Arc<Engine>) {
             last_embed = Instant::now();
         }
         match e.refresh_with(false, embed) {
-            Ok(s) if s.changed > 0 => tracing::info!("indexed {} changed files", s.changed),
+            Ok(s) if !s.updated.is_empty() => log_updated(&s.updated),
             Ok(_) => {}
             Err(err) => tracing::warn!("index pass failed: {err:#}"),
         }
@@ -68,8 +72,7 @@ pub fn run(e: Arc<Engine>) {
                 &e.llm, &e.cfg, &e.db, false, false, 20, false,
             )) {
                 Ok(0) => {}
-                Ok(n) => {
-                    tracing::info!("summarized {n} sessions");
+                Ok(_) => {
                     if let Err(err) = e.refresh(false) {
                         tracing::warn!("index pass failed: {err:#}");
                     }
@@ -87,4 +90,20 @@ pub fn run(e: Arc<Engine>) {
             Err(RecvTimeoutError::Disconnected) => std::thread::sleep(poll),
         }
     }
+}
+
+/// Names the sessions an index pass touched. The first pass after install can
+/// touch thousands, so only the first few are listed.
+fn log_updated(updated: &[String]) {
+    const SHOWN: usize = 5;
+    let n = updated.len();
+    let mut msg = format!(
+        "indexed {}: {}",
+        crate::util::count(n, "session"),
+        updated[..n.min(SHOWN)].join("; ")
+    );
+    if n > SHOWN {
+        msg.push_str(&format!("; and {} more", n - SHOWN));
+    }
+    tracing::info!("{msg}");
 }

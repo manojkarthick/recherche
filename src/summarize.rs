@@ -12,6 +12,8 @@ const DIGEST_CHARS: usize = 22_000;
 
 pub struct Candidate {
     pub id: String,
+    /// The repo name, for logs.
+    pub repo: String,
     pub turns: i64,
     pub digest: String,
 }
@@ -35,17 +37,24 @@ pub fn candidates(
     };
     let idle_before = chrono::Utc::now().timestamp() - cfg.llm.idle_minutes * 60;
     let mut st = c.prepare(
-        "SELECT id, source, COALESCE(cwd, ''), turn_count, summary_turns FROM sessions
+        "SELECT id, source, COALESCE(cwd, ''), turn_count, summary_turns, COALESCE(repo_key, '') FROM sessions
          WHERE skip = 0 AND turn_count > 0 AND parent_id IS NULL AND (? OR ended < ?) AND started >= ?
          ORDER BY ended DESC",
     )?;
-    let rows: Vec<(String, String, String, i64, Option<i64>)> = st
+    let rows: Vec<(String, String, String, i64, Option<i64>, String)> = st
         .query_map(params![force, idle_before, cutoff], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })?
         .collect::<Result<_, _>>()?;
     let mut out = vec![];
-    for (id, source, cwd, turns, done) in rows {
+    for (id, source, cwd, turns, done, repo) in rows {
         if !allowed(cfg, &source, &cwd) {
             continue;
         }
@@ -55,6 +64,11 @@ pub fn candidates(
         }
         out.push(Candidate {
             digest: digest(c, &id)?,
+            repo: if repo.is_empty() {
+                source
+            } else {
+                crate::extract::repo_display(&repo)
+            },
             id,
             turns,
         });
@@ -211,6 +225,14 @@ pub async fn run(
                         i + 1,
                         clip_chars(&s.title, 70),
                         started.elapsed().as_secs()
+                    );
+                } else {
+                    tracing::info!(
+                        "summarized {} \"{}\" ({}, {}/{total})",
+                        cand.repo,
+                        clip_chars(&s.title, 60),
+                        crate::util::count(cand.turns as usize, "turn"),
+                        i + 1
                     );
                 }
                 let c = store::open(db)?;
