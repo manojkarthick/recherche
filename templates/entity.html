@@ -11,16 +11,20 @@
 </head>
 <body class="entity-page">
 <header class="bar">
-  <a class="wordmark small" href="/">recherche</a>
-  <a class="back" href="/">Search</a>
+  <div class="bar-inner">
+    <div class="bar-left">
+      <a class="wordmark" href="/">recherche</a>
+      <a class="back" href="/">Search</a>
+    </div>
+  </div>
 </header>
 <header class="entity-head">
-  <div class="mrow">
-    <div class="mg"><span>{{ kind }}</span><span>{{ count }}</span></div>
-    <div>
+  <div class="entity-bar">
+    <div class="entity-title-group">
+      <p class="entity-kind">{{ kind }}, {{ count }}</p>
       <h1 class="{{ ref_class }}">{{ crate::web::wbr(heading)|safe }}{% if let Some(g) = github %} <a class="ext" href="{{ g }}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open {{ heading }} on GitHub"></a>{% endif %}</h1>
-      {% if let Some(h) = search_href %}<a class="scoped" href="{{ h }}">Search within these sessions</a>{% endif %}
     </div>
+    {% if let Some(h) = search_href %}<a class="scoped" href="{{ h }}">Search within these sessions</a>{% endif %}
   </div>
 </header>
 <main id="results">{{ results_html|safe }}</main>

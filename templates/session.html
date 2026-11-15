@@ -10,8 +10,15 @@
 </head>
 <body class="session-page" data-resume="{{ resume }}">
 <header class="bar">
-  <a class="wordmark small" href="/">recherche</a>
-  <a class="back" href="{{ back }}">{% if q.is_empty() %}Search{% else %}Back to “{{ q }}”{% endif %}</a>
+  <div class="bar-inner">
+    <div class="bar-left">
+      <a class="wordmark" href="/">recherche</a>
+      <a class="back" href="{{ back }}">{% if q.is_empty() %}Search{% else %}Back to “{{ q }}”{% endif %}</a>
+    </div>
+    <div class="bar-right">
+      <span class="keys-inline"><kbd>Esc</kbd> back <kbd>c</kbd> copy resume command</span>
+    </div>
+  </div>
 </header>
 <div class="session">
 <aside class="index">
@@ -29,7 +36,7 @@
       {% if !children.is_empty() %}<dt>Subagents</dt>{% for (href, t) in children %}<dd><a href="{{ href }}">{{ t }}</a></dd>{% endfor %}{% endif %}
       {% for g in entities %}
       <dt>{{ g.name }}</dt>
-      {% for (label, how, href, github) in g.items %}<dd>{% if href.is_empty() %}<span class="e">{{ crate::web::wbr(label)|safe }}</span>{% else %}<a class="e" href="{{ href }}">{{ crate::web::wbr(label)|safe }}</a>{% endif %}{% if !github.is_empty() %} <a class="ext" href="{{ github }}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open {{ label }} on GitHub"></a>{% endif %}{% if !how.is_empty() %} <span class="how">{{ how }}</span>{% endif %}</dd>{% endfor %}
+      {% for (label, how, href, github) in g.items %}<dd><span class="ref-item">{% if href.is_empty() %}<span class="e">{{ crate::web::wbr(label)|safe }}</span>{% else %}<a class="e" href="{{ href }}">{{ crate::web::wbr(label)|safe }}</a>{% endif %}{% if !github.is_empty() %}<a class="ext" href="{{ github }}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open {{ label }} on GitHub"></a>{% endif %}</span>{% if !how.is_empty() %} <span class="how">{{ how }}</span>{% endif %}</dd>{% endfor %}
       {% endfor %}
     </dl>
   </section>
@@ -37,54 +44,91 @@
 </aside>
 <main class="transcript">
   <header class="rh">
-    <div class="mrow">
-      <div class="mg"><time title="{{ started }} to {{ ended }}">{{ day }}</time><span>{{ duration }}</span><span class="agent {{ agent }}"{% if !model.is_empty() %} title="{{ model }}"{% endif %}>{% if agent == "claude" %}Claude Code{% else %}Codex{% endif %}</span></div>
-      <div>
-        <h1>{{ title }}</h1>
-        {% if !chips.is_empty() %}<div class="refs">{% for c in chips %}<a class="{{ c.class }}" href="{{ c.href }}" title="{{ c.title }}">{{ c.label }}</a>{% if let Some(g) = c.github %}<a class="ext" href="{{ g }}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open {{ c.label }} on GitHub"></a>{% endif %}{% endfor %}</div>{% endif %}
-      </div>
+    <div class="rh-meta">
+      <time title="{{ started }} to {{ ended }}">{{ day }}</time>
+      <span class="rh-dur">{{ duration }}</span>
+      <span class="rh-agent">{% if agent == "claude" %}Claude Code{% else %}Codex{% endif %}</span>
+      {% if !model.is_empty() %}<span class="rh-model">{{ model }}</span>{% endif %}
     </div>
-    {% if let Some(s) = summary %}
-    <div class="mrow sum-row">
-      <div class="mg"><span>Summary</span><span class="gen" title="Written by a language model from the transcript">generated</span></div>
-      <div class="ssum">{{ s|safe }}</div>
+    <h1>{{ title }}</h1>
+    {% if !chips.is_empty() %}
+    <div class="ref-lines">
+      {% for line in crate::web::chip_lines(chips) %}<div class="refs">{% for c in line %}{% include "chip.html" %}{% endfor %}</div>{% endfor %}
     </div>
     {% endif %}
-    <div class="mrow resume-row">
-      <div class="mg"><span>Resume</span></div>
-      <div>
-        <div class="rs">
-          <code class="rcmd">{{ resume_cmd }}</code>
-          {% if !cwd.is_empty() %}<span class="rdir">in {{ crate::web::wbr(cwd)|safe }}</span>{% endif %}
-          <button type="button" class="cc" data-copy="{{ resume }}" title="Copy resume command" aria-label="Copy resume command"><span class="lbl"></span></button>
-        </div>
-        {% if cwd_gone %}<p class="warn">Directory no longer exists. Recreate it before resuming; the resume command will fail without it.</p>{% endif %}
+    <div class="rs">
+      <div class="rs-main">
+        <span class="rs-prompt" aria-hidden="true">$</span>
+        <code class="rcmd">{{ resume_cmd }}</code>
+        {% if !cwd.is_empty() %}<span class="rdir" title="Working directory">{{ crate::web::wbr(cwd)|safe }}</span>{% endif %}
       </div>
+      <button type="button" class="cc" data-copy="{{ resume }}" title="Copy resume command (c)"><span class="lbl">Copy resume command</span></button>
     </div>
+    {% if cwd_gone %}<p class="warn">This directory no longer exists. Recreate it before resuming; the resume command will fail without it.</p>{% endif %}
+    {% if let Some(s) = summary %}
+    <section class="summary" aria-labelledby="sum-h">
+      <h2 id="sum-h">Summary <span class="gen" title="Written by a language model from the transcript">generated</span></h2>
+      <div class="ssum">{{ s|safe }}</div>
+    </section>
+    {% endif %}
   </header>
   <div class="turns">
   {% for t in turns %}
   <article class="t{% if t.matched %} matched{% endif %}" id="t{{ t.idx }}">
     {% if !t.user.is_empty() %}
     <div class="mrow prompt">
-      <div class="mg">{% if let Some(d) = t.day %}<span class="day">{{ d }}</span>{% endif %}<time title="{{ t.when }}">{{ t.time }}</time>{% if t.matched %}<span class="mt">Matched</span>{% endif %}{% if let Some(b) = t.branch %}<span class="tb" title="Branch {{ b }}">{{ b }}</span>{% endif %}<span class="visually-hidden">You</span></div>
+      <div class="mg">
+        <div class="mg-top">
+          <span class="who-you">You</span>
+          <time title="{{ t.when }}">{{ t.time }}</time>
+        </div>
+        {% if t.day.is_some() || t.branch.is_some() || t.matched %}
+        <div class="mg-sub">
+          {% if let Some(d) = t.day %}<span class="day">{{ d }}</span>{% endif %}
+          {% if let Some(b) = t.branch %}<span class="tb" title="Branch {{ b }}">{{ b }}</span>{% endif %}
+          {% if t.matched %}<span class="mt">Matched</span>{% endif %}
+        </div>
+        {% endif %}
+      </div>
       <div class="text">{{ t.user|safe }}</div>
     </div>
     {% endif %}
     {% if !t.tools.is_empty() %}
     <div class="mrow toolrow">
-      <div class="mg"></div>
+      <div class="mg">
+        <span class="who-tools">Tools</span>
+      </div>
       <details class="tools">
-        <summary>{{ t.tools.len() }} tool {% if t.tools.len() == 1 %}call{% else %}calls{% endif %}</summary>
-        {% for x in t.tools %}
-        <div class="tool{% if x.error %} err{% endif %}"><div class="cmd"><span class="tn">{{ x.name }}</span> {{ x.input }}</div>{% if !x.output.is_empty() %}<pre>{{ x.output }}</pre>{% endif %}</div>
-        {% endfor %}
+        <summary>
+          <span class="t-count">{{ t.tools.len() }} tool {% if t.tools.len() == 1 %}call{% else %}calls{% endif %}</span>
+          {% if !t.tools_summary.is_empty() %}<span class="t-names">{{ t.tools_summary }}</span>{% endif %}
+          {% if t.tools_err %}<span class="t-err">failed</span>{% endif %}
+        </summary>
+        <div class="tool-list">
+          {% for x in t.tools %}
+          <div class="tool{% if x.error %} err{% endif %}">
+            <div class="cmd"><span class="tn">{{ x.name }}</span> {{ x.input }}</div>
+            {% if !x.output.is_empty() %}<pre>{{ x.output }}</pre>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
       </details>
     </div>
     {% endif %}
     {% if !t.assistant.is_empty() %}
     <div class="mrow reply">
-      <div class="mg">{% if t.user.is_empty() %}{% if let Some(d) = t.day %}<span class="day">{{ d }}</span>{% endif %}<time title="{{ t.when }}">{{ t.time }}</time>{% if t.matched %}<span class="mt">Matched</span>{% endif %}{% endif %}<span class="who">{% if agent == "claude" %}Claude{% else %}Codex{% endif %}</span></div>
+      <div class="mg">
+        <div class="mg-top">
+          <span class="who-agent">{% if agent == "claude" %}Claude{% else %}Codex{% endif %}</span>
+          {% if t.user.is_empty() %}<time title="{{ t.when }}">{{ t.time }}</time>{% endif %}
+        </div>
+        {% if t.user.is_empty() && (t.day.is_some() || t.matched) %}
+        <div class="mg-sub">
+          {% if let Some(d) = t.day %}<span class="day">{{ d }}</span>{% endif %}
+          {% if t.matched %}<span class="mt">Matched</span>{% endif %}
+        </div>
+        {% endif %}
+      </div>
       <div class="text">{{ t.assistant|safe }}</div>
     </div>
     {% endif %}

@@ -5,7 +5,10 @@
 
   function select(i) {
     const r = results();
-    if (!r.length) return;
+    if (!r.length) {
+      cur = -1;
+      return;
+    }
     cur = Math.max(0, Math.min(i, r.length - 1));
     r.forEach((x, j) => x.classList.toggle("sel", j === cur));
     r[cur].scrollIntoView({ block: "nearest" });
@@ -72,9 +75,38 @@
         li.scrollIntoView({ block: "nearest" });
       }
     };
+    // A turn jumped to by link or #t… stays marked until the reader scrolls on
+    // their own: the last turns can't scroll up to the line below, so the
+    // position alone would leave an earlier turn marked.
+    let pinned = null;
+    const pin = () => {
+      const t = location.hash && document.getElementById(location.hash.slice(1));
+      if (t && turns.includes(t)) {
+        pinned = t;
+        mark(t);
+      }
+    };
+    for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) {
+      addEventListener(ev, () => (pinned = null), { passive: true });
+    }
+    addEventListener("hashchange", pin);
+    // Clicking the turn already in the URL fires no hashchange.
+    document.querySelector(".toc")?.addEventListener("click", (e) => {
+      const t = turns.find((x) => "#" + x.id === e.target.closest("a")?.getAttribute("href"));
+      if (t) {
+        pinned = t;
+        mark(t);
+      }
+    });
     // The turn being read is the last one whose top has passed the upper third
     // of the window. Turns are in page order, so a binary search finds it.
     const update = () => {
+      if (pinned) return mark(pinned);
+      // At the bottom nothing more can scroll up, so the last turn in view wins.
+      if (innerHeight + scrollY >= document.documentElement.scrollHeight - 2) {
+        const last = turns.findLast((t) => t.getBoundingClientRect().top < innerHeight);
+        if (last) return mark(last);
+      }
       const line = innerHeight / 3;
       let lo = 0;
       let hi = turns.length - 1;
@@ -95,6 +127,7 @@
       });
     }, { passive: true });
     update();
+    pin();
   }
 
   // Back to top, once the header is out of view.
