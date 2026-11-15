@@ -176,11 +176,19 @@ pub struct Catalog {
     /// Repo key → display name.
     pub repos: HashMap<String, String>,
     pub children: HashMap<String, Vec<String>>,
+    /// When the daemon first ran; sessions started earlier are only
+    /// summarized by an explicit `recherche summarize`.
+    pub auto_summary_since: i64,
 }
 
 impl Catalog {
     pub fn load(c: &Connection) -> Result<Self> {
-        let mut cat = Catalog::default();
+        let mut cat = Catalog {
+            auto_summary_since: get_meta(c, "auto_summary_since")?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(i64::MAX),
+            ..Default::default()
+        };
         let mut st = c.prepare(
             "SELECT id, source, parent_id, host, cwd,
                     COALESCE(llm_title, title, ''), recap, summary, kind, outcome, tags, model,

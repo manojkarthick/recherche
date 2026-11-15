@@ -70,6 +70,8 @@
       <h2 id="sum-h">Summary <span class="gen" title="Written by a language model from the transcript">generated</span></h2>
       <div class="ssum">{{ s|safe }}</div>
     </section>
+    {% else if let Some(n) = summary_note %}
+    <p class="nosum">{{ n }}</p>
     {% endif %}
   </header>
   <div class="turns">
