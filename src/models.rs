@@ -3,6 +3,7 @@
 //! unload after `model_idle_seconds`, so the idle daemon stays small.
 
 use crate::config::{Search, cache_dir};
+use crate::util::count;
 use anyhow::{Result, anyhow};
 use fastembed::{
     AutoDevicePolicy, EmbeddingModel, RerankInitOptions, RerankerModel, TextEmbedding,
@@ -154,7 +155,9 @@ fn turn_embed_text(user: &str, assistant: &str) -> String {
 /// Embeds turns and cards that have no vector yet. Vectors are keyed by a
 /// content hash, so a growing session only embeds its new turns.
 pub fn embed_missing(models: &Models, c: &Connection) -> Result<usize> {
+    let started = Instant::now();
     let mut todo: Vec<(String, String)> = vec![];
+    let turns;
     {
         let mut st = c.prepare(
             "SELECT DISTINCT t.vhash, t.clean_user, t.assistant_text FROM turns t JOIN sessions s ON s.id = t.session_id
@@ -175,6 +178,7 @@ pub fn embed_missing(models: &Models, c: &Connection) -> Result<usize> {
             "SELECT card_hash, card_text FROM sessions s WHERE skip = 0 AND card_hash IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM vecs v WHERE v.hash = s.card_hash)",
         )?;
+        turns = todo.len();
         for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
             let (h, t) = row?;
             todo.push((h, crate::model::clip_chars(&t, 1500)));
@@ -191,7 +195,23 @@ pub fn embed_missing(models: &Models, c: &Connection) -> Result<usize> {
             ins.execute(params![h, bytes])?;
         }
         done += chunk.len();
-        tracing::info!("embedded {done}/{}", todo.len());
+        // Progress matters only for large backlogs, like the first run.
+        if todo.len() > 128 {
+            tracing::info!("embedded {done}/{}", todo.len());
+        }
+    }
+    if done > 0 {
+        let cards = done - turns;
+        let what = match (turns, cards) {
+            (_, 0) => count(turns, "turn"),
+            (0, _) => count(cards, "session card"),
+            _ => format!(
+                "{} and {}",
+                count(turns, "turn"),
+                count(cards, "session card")
+            ),
+        };
+        tracing::info!("embedded {what} in {:.1}s", started.elapsed().as_secs_f32());
     }
     Ok(done)
 }

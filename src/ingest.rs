@@ -9,7 +9,7 @@
 use crate::config::{Config, data_dir};
 use crate::extract;
 use crate::model::{Fact, ParsedSession};
-use crate::util::hash;
+use crate::util::{count, hash};
 use anyhow::Result;
 use regex::Regex;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -24,6 +24,8 @@ pub struct Stats {
     pub changed: usize,
     pub sessions: usize,
     pub bad_lines: usize,
+    /// One line per stored session, such as `repo "title" +3 turns`, for logs.
+    pub updated: Vec<String>,
 }
 
 pub fn archive_root() -> PathBuf {
@@ -193,16 +195,51 @@ impl<'a> Ingester<'a> {
                 continue;
             }
             let facts = extract::extract(&ps, self.cfg, &self.tickets);
+            let before: Option<i64> = c
+                .query_row(
+                    "SELECT turn_count FROM sessions WHERE id = ?",
+                    [&ps.id],
+                    |r| r.get(0),
+                )
+                .optional()?;
             if self.store(c, &ps, &facts, &dst, bytes.len() as i64)? {
                 c.execute(
                     "UPDATE files SET session_id = ? WHERE src_path = ?",
                     params![ps.id, src],
                 )?;
                 stats.sessions += 1;
+                if !ps.skip {
+                    stats.updated.push(self.label(&ps, before));
+                }
             }
         }
         self.link_repos(c)?;
         Ok(stats)
+    }
+
+    fn label(&self, ps: &ParsedSession, before: Option<i64>) -> String {
+        let repo = ps.cwd.as_deref().map_or_else(
+            || ps.source.to_string(),
+            |cwd| extract::repo_from_path(cwd, &self.worktrees).1,
+        );
+        let title = ps
+            .title
+            .as_deref()
+            .or_else(|| {
+                ps.turns
+                    .iter()
+                    .map(|t| t.user.as_str())
+                    .find(|u| !u.is_empty())
+            })
+            .map(|t| crate::model::clip_chars(t.lines().next().unwrap_or(""), 60))
+            .unwrap_or_else(|| ps.id.chars().take(8).collect());
+        let turns = ps.turns.len() as i64;
+        let change = match before {
+            None => format!("new, {}", count(turns as usize, "turn")),
+            Some(b) if turns > b => format!("+{}", count((turns - b) as usize, "turn")),
+            Some(_) => "updated".into(),
+        };
+        format!("{repo} \"{title}\" {change}")
     }
 
     fn store(
