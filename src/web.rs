@@ -275,6 +275,7 @@ pub struct FacetItem {
     pub title: String,
     pub count: usize,
     pub href: String,
+    pub hx_href: String,
     pub active: bool,
 }
 
@@ -283,11 +284,19 @@ pub struct FacetGroup {
     pub items: Vec<FacetItem>,
 }
 
+pub struct FilterChip {
+    pub label: String,
+    pub href: String,
+    pub hx_href: String,
+}
+
 #[derive(Template)]
 #[template(path = "results.html")]
 struct ResultsTpl {
     results: Vec<ResultView>,
     facets: Vec<FacetGroup>,
+    hidden: Vec<(String, String)>,
+    active: Vec<FilterChip>,
     status: String,
     refining: bool,
     notes: Vec<String>,
@@ -300,8 +309,6 @@ struct ResultsTpl {
 #[template(path = "index.html")]
 struct IndexTpl {
     q: String,
-    hidden: Vec<(String, String)>,
-    active: Vec<Chip>,
     results_html: String,
     sessions: usize,
 }
@@ -647,6 +654,7 @@ fn facets(cat: &Catalog, p: &Params, hits: &[Hit]) -> Vec<FacetGroup> {
         title: String::new(),
         count,
         href: p.url("/", Some((k, v))),
+        hx_href: p.url("/search", Some((k, v))),
         active: active(k, v),
     };
     let mut groups = vec![];
@@ -740,29 +748,53 @@ fn render_results(
         }
     }
     let status = match res.stage {
-        "entity" => "Newest first".into(),
-        _ if p.is_empty() => format!("{} most recent sessions", results.len()),
-        "keyword" => format!(
-            "{} sessions with matching words. Ranking by meaning…",
-            res.total
-        ),
+        "entity" => "Sorted by newest".into(),
+        _ if p.is_empty() => format!("{} recent sessions", results.len()),
+        "keyword" => format!("{} results · reranking…", res.total),
         "refined" => {
             let terms = res
                 .rewrite
                 .as_ref()
                 .map(|r| r.terms.join(", "))
                 .unwrap_or_default();
-            format!("{} sessions, ranked. Also searched for: {terms}", res.total)
+            format!("{} results · + {terms}", res.total)
         }
-        _ => format!("{} sessions, ranked in {} ms", res.total, res.took_ms),
+        _ => format!("{} results · {} ms", res.total, res.took_ms),
     };
+    let hidden = p
+        .filters()
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let active = p
+        .filters()
+        .into_iter()
+        .map(|(k, v)| {
+            let label = if k == "repo" {
+                crate::extract::repo_display(v)
+            } else {
+                v.to_string()
+            };
+            FilterChip {
+                label: format!("{k}:{label}"),
+                href: p.url("/", Some((k, v))),
+                hx_href: p.url("/search", Some((k, v))),
+            }
+        })
+        .collect();
     let tpl = ResultsTpl {
-        facets: if p.is_empty() { vec![] } else { facets(&cat, p, &res.hits) },
+        facets: if p.is_empty() {
+            vec![]
+        } else {
+            facets(&cat, p, &res.hits)
+        },
+        hidden,
+        active,
         empty_hint: results.is_empty().then(|| {
             if p.filters().is_empty() {
-                "No session matches. Try fewer or different words, or describe what the session was about.".into()
+                "No matching sessions.".into()
             } else {
-                "No session matches with these filters. Remove a filter to search wider.".into()
+                "No matching sessions for active filters.".into()
             }
         }),
         results,
@@ -827,36 +859,10 @@ async fn index(
     let e2 = e.clone();
     let p2 = p.clone();
     let results_html = tokio::task::spawn_blocking(move || first_stage(&e2, &p2)).await??;
-    let hidden = p
-        .filters()
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    let active = p
-        .filters()
-        .into_iter()
-        .map(|(k, v)| {
-            let label = if k == "repo" {
-                crate::extract::repo_display(v)
-            } else {
-                v.to_string()
-            };
-            Chip {
-                label: format!("{k}: {label}"),
-                href: p.url("/", Some((k, v))),
-                class: "chip active",
-                title: "Remove filter".into(),
-                github: None,
-                hit: false,
-            }
-        })
-        .collect();
     let sessions = e.catalog().sessions.len();
     Ok(Html(
         IndexTpl {
             q: p.q.clone(),
-            hidden,
-            active,
             results_html,
             sessions,
         }
@@ -995,6 +1001,8 @@ pub struct TurnView {
     pub user: String,
     pub assistant: String,
     pub tools: Vec<ToolView>,
+    pub tools_summary: String,
+    pub tools_err: bool,
     pub matched: bool,
     /// Set when the branch differs from the previous turn's.
     pub branch: Option<String>,
@@ -1086,6 +1094,17 @@ async fn session_page(
             if branch.is_some() {
                 last_branch = branch.clone();
             }
+            let mut tool_names: Vec<&str> = vec![];
+            for tv in &tools {
+                if !tv.name.is_empty() && !tool_names.contains(&tv.name.as_str()) {
+                    tool_names.push(&tv.name);
+                    if tool_names.len() == 4 {
+                        break;
+                    }
+                }
+            }
+            let tools_summary = tool_names.join(", ");
+            let tools_err = tools.iter().any(|tv| tv.error);
             turns.push(TurnView {
                 idx: t.idx,
                 when: t.ts.map(fmt_date).unwrap_or_default(),
@@ -1098,6 +1117,8 @@ async fn session_page(
                 user,
                 assistant,
                 tools,
+                tools_summary,
+                tools_err,
                 matched: uh + ah > 0,
                 branch,
             });

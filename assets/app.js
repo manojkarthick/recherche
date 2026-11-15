@@ -5,7 +5,10 @@
 
   function select(i) {
     const r = results();
-    if (!r.length) return;
+    if (!r.length) {
+      cur = -1;
+      return;
+    }
     cur = Math.max(0, Math.min(i, r.length - 1));
     r.forEach((x, j) => x.classList.toggle("sel", j === cur));
     r[cur].scrollIntoView({ block: "nearest" });
