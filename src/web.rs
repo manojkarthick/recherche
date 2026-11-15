@@ -4,6 +4,7 @@
 
 use crate::search::{Engine, Hit, Results};
 use crate::store::{Catalog, SessionMeta};
+use crate::summarize::Pending;
 use crate::util::{fmt_ago, fmt_date, fmt_day, fmt_duration, fmt_time};
 use anyhow::Result;
 use askama::Template;
@@ -280,6 +281,9 @@ pub struct ResultView {
     pub resume: String,
     pub cwd_gone: bool,
     pub session_id: String,
+    /// Tooltip for the "In progress" badge, set while a session that will
+    /// be summarized is still active.
+    pub in_progress: Option<String>,
 }
 
 pub struct FacetItem {
@@ -667,6 +671,7 @@ fn blurb_html(text: &str, terms: &[String], budget: usize) -> String {
 }
 
 fn result_view(
+    e: &Engine,
     cat: &Catalog,
     h: &Hit,
     texts: &std::collections::HashMap<i64, (i64, String, String)>,
@@ -747,7 +752,33 @@ fn result_view(
             .as_ref()
             .is_some_and(|c| !std::path::Path::new(c).exists()),
         session_id: s.id.clone(),
+        in_progress: (pending(e, cat, s) == Some(Pending::InProgress)).then(|| {
+            format!(
+                "No summary yet. Sessions are summarized after {} minutes without any activity.",
+                e.cfg.llm.idle_minutes
+            )
+        }),
     })
+}
+
+/// Why a session has no summary yet, when it is expected to get one.
+fn pending(e: &Engine, cat: &Catalog, s: &SessionMeta) -> Option<Pending> {
+    if !e.llm.summaries_enabled() {
+        return None;
+    }
+    let now = chrono::Utc::now().timestamp();
+    crate::summarize::pending(&e.cfg, cat.auto_summary_since, s, now)
+}
+
+/// The session page's stand-in for a missing summary.
+fn pending_note(p: Pending, idle_minutes: i64) -> String {
+    match p {
+        Pending::InProgress => format!(
+            "This session is in progress. Sessions are summarized after {idle_minutes} minutes without any activity."
+        ),
+        Pending::Queued => "Summary queued. The background pass runs every few minutes.".into(),
+        Pending::Backfill => "Not summarized automatically because this session started before recherche serve first ran. Run recherche summarize to add it.".into(),
+    }
 }
 
 /// The product name, used where agents are filtered rather than quoted.
@@ -894,7 +925,7 @@ fn render_results(
     let terms = highlight_terms(&pq.text, &extra);
     let mut results: Vec<ResultView> = shown
         .iter()
-        .filter_map(|h| result_view(&cat, h, &texts, &terms, &p.q))
+        .filter_map(|h| result_view(e, &cat, h, &texts, &terms, &p.q))
         .collect();
     if let Some(href) = hide_ref {
         for r in &mut results {
@@ -1178,6 +1209,8 @@ struct SessionTpl {
     title: String,
     agent: String,
     summary: Option<String>,
+    /// Why there is no summary yet, shown in its place.
+    summary_note: Option<String>,
     chips: Vec<Chip>,
     cwd: String,
     cwd_gone: bool,
@@ -1352,6 +1385,7 @@ async fn session_page(
                 .as_deref()
                 .or(s.recap.as_deref())
                 .map(|s| summary_html(s, &[])),
+            summary_note: pending(&e, &cat, s).map(|p| pending_note(p, e.cfg.llm.idle_minutes)),
             chips: chips_for(&cat, s),
             cwd: s.cwd.clone().unwrap_or_default(),
             cwd_gone: s
@@ -1632,6 +1666,7 @@ mod tests {
                 title: "Summary example".into(),
                 agent: "claude".into(),
                 summary: Some(summary_html(summary, &[])),
+                summary_note: None,
                 chips: vec![],
                 cwd: String::new(),
                 cwd_gone: false,

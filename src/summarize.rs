@@ -55,13 +55,7 @@ pub fn candidates(
         .collect::<Result<_, _>>()?;
     let mut out = vec![];
     for (id, source, cwd, turns, done, repo) in rows {
-        if !cfg.llm.summarize_sources.contains(&source)
-            || cfg
-                .llm
-                .summarize_exclude_paths
-                .iter()
-                .any(|p| !p.is_empty() && cwd.contains(p.as_str()))
-        {
+        if !allowed(cfg, &source, &cwd) {
             continue;
         }
         // Re-summarize only once a session has grown by half since its summary.
@@ -80,6 +74,47 @@ pub fn candidates(
         });
     }
     Ok(out)
+}
+
+/// Whether the config lets this session be sent for a summary at all.
+fn allowed(cfg: &Config, source: &str, cwd: &str) -> bool {
+    cfg.llm.summarize_sources.iter().any(|s| s == source)
+        && !cfg
+            .llm
+            .summarize_exclude_paths
+            .iter()
+            .any(|p| !p.is_empty() && cwd.contains(p.as_str()))
+}
+
+/// Why a session the daemon would summarize has no summary yet.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Pending {
+    /// Active within `idle_minutes`; summarized once it goes quiet.
+    InProgress,
+    /// Idle and due; the daemon picks it up on its next pass.
+    Queued,
+    /// Started before the daemon first ran, so only `recherche summarize` covers it.
+    Backfill,
+}
+
+/// Mirrors the filters in `candidates`, assuming summaries are enabled.
+/// `None` when the session has a summary or recap, or will never get one
+/// (a subagent, or excluded by source or path).
+pub fn pending(cfg: &Config, since: i64, s: &store::SessionMeta, now: i64) -> Option<Pending> {
+    if s.summary.is_some()
+        || s.recap.is_some()
+        || s.parent_id.is_some()
+        || !allowed(cfg, &s.source, s.cwd.as_deref().unwrap_or(""))
+    {
+        return None;
+    }
+    Some(if s.started < since {
+        Pending::Backfill
+    } else if s.ended >= now - cfg.llm.idle_minutes * 60 {
+        Pending::InProgress
+    } else {
+        Pending::Queued
+    })
 }
 
 /// What the summary is written from: prompts, commits, PRs, files, errors
@@ -223,6 +258,35 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_explains_why_a_session_has_no_summary() {
+        let now = 100_000;
+        let since = 50_000;
+        let mut cfg = Config::default();
+        cfg.llm.summarize_sources = vec!["claude".into()];
+        cfg.llm.summarize_exclude_paths = vec!["/excluded".into()];
+        cfg.llm.idle_minutes = 20;
+        let base = store::SessionMeta {
+            source: "claude".into(),
+            started: since + 1,
+            ended: now - 60,
+            ..Default::default()
+        };
+        let with = |f: fn(&mut store::SessionMeta)| {
+            let mut s = base.clone();
+            f(&mut s);
+            pending(&cfg, since, &s, now)
+        };
+        assert_eq!(with(|_| {}), Some(Pending::InProgress));
+        assert_eq!(with(|s| s.ended = 100_000 - 21 * 60), Some(Pending::Queued));
+        assert_eq!(with(|s| s.started = 49_999), Some(Pending::Backfill));
+        assert_eq!(with(|s| s.summary = Some("- Done".into())), None);
+        assert_eq!(with(|s| s.recap = Some("Recap".into())), None);
+        assert_eq!(with(|s| s.parent_id = Some("parent".into())), None);
+        assert_eq!(with(|s| s.source = "codex".into()), None);
+        assert_eq!(with(|s| s.cwd = Some("/excluded/repo".into())), None);
+    }
 
     #[test]
     fn force_bypasses_inactivity_and_growth_but_preserves_exclusions() -> Result<()> {
