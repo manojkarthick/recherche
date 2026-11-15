@@ -17,7 +17,7 @@
 <li class="result" data-href="{{ r.href }}" data-resume="{{ r.resume }}">
   <div class="r-head">
     <a class="title" href="{{ r.href }}">{{ r.title }}</a>
-    <span class="r-when">{% if r.cwd_gone %}<span class="warn-badge" title="Recreate the directory before resuming. The resume command will fail without it.">Directory no longer exists</span>{% endif %}<time title="{{ r.when }}"{% if r.time_hit %} class="hit"{% endif %}>{{ r.ago }}</time></span>
+    <span class="r-when">{% if r.cwd_gone %}<span class="warn-badge" title="Recreate the directory before resuming. The resume command will fail without it.">Directory no longer exists</span>{% endif %}{% if let Some(t) = r.in_progress %}<span class="live-badge" title="{{ t }}">In progress</span>{% endif %}<time title="{{ r.when }}"{% if r.time_hit %} class="hit"{% endif %}>{{ r.ago }}</time></span>
   </div>
   {% if let Some(b) = r.blurb %}<div class="blurb">{{ b|safe }}</div>{% endif %}
   {% for s in r.snippets %}<p class="snippet">{{ s|safe }}</p>{% endfor %}
