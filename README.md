@@ -9,6 +9,8 @@ command-line interface. It reads the session files your agents already write,
 keeps a local archive, and combines keyword search with local models that find
 similar meaning. No API key is needed for that workflow.
 
+![Search results for “the thread where we fixed the ordering issue”, with matches highlighted and filters for agent, repo, date, kind and outcome](docs/images/search.png)
+
 ## What you can do
 
 - Find work across Claude Code and Codex without remembering which agent you used.
@@ -17,6 +19,10 @@ similar meaning. No API key is needed for that workflow.
 - Keep imported sessions searchable after their original files or worktrees disappear.
 - Optionally add generated titles, summaries, and query expansion through an
   LLM API.
+
+![A session page with its summary, resume command, a warning that the directory is gone, and the transcript](docs/images/session.png)
+
+The screenshots show made-up sessions from `recherche demo`.
 
 This is a personal session search tool. Repository and PR information comes
 from recorded sessions; recherche does not crawl your repositories or fetch

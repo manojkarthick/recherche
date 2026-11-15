@@ -68,3 +68,18 @@ tags = ["ordering"]
 
 Recherche finds a Claude session's repo the way it does for real sessions: from
 pushes and PR links in the session, or from the directory name.
+
+## README screenshots
+
+`docs/images/` holds the README's screenshots, taken from the demo at 1280×900
+and twice the pixel density. With the demo running, headless Chrome does it:
+
+```sh
+chrome=/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome
+"$chrome" --headless=new --hide-scrollbars --force-device-scale-factor=2 \
+  --window-size=1280,900 --virtual-time-budget=8000 \
+  --screenshot=docs/images/search.png \
+  'http://127.0.0.1:7778/?q=the+thread+where+we+fixed+the+ordering+issue'
+```
+
+`session.png` is the page for `sessions/order-dedupe.toml`.
