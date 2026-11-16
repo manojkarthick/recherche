@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0](https://github.com/manojkarthick/recherche/compare/v0.1.0...v0.2.0) (2026-11-16)
+
+
+### Features
+
+* **brew:** run recherche serve with brew services ([#28](https://github.com/manojkarthick/recherche/issues/28)) ([846795a](https://github.com/manojkarthick/recherche/commit/846795a37b884803d1904993ab4df067d69a7bec))
+* **daemon:** name the sessions each index, embed and summary pass touches ([#25](https://github.com/manojkarthick/recherche/issues/25)) ([a1f2fda](https://github.com/manojkarthick/recherche/commit/a1f2fda11f93869ff1619c491c576eaa00c8b2c3))
+* **demo:** serve made-up sessions for UI work and screenshots ([#26](https://github.com/manojkarthick/recherche/issues/26)) ([37bcabd](https://github.com/manojkarthick/recherche/commit/37bcabdf33379e892448a8a09d220008d24f0bfe))
+* **ingest:** recognize Codex, Herdr and Conductor worktree layouts ([#21](https://github.com/manojkarthick/recherche/issues/21)) ([94cd201](https://github.com/manojkarthick/recherche/commit/94cd201007e5934cae7646b32320e6ad0d59d0be))
+* **web:** explain why a session has no summary yet ([#24](https://github.com/manojkarthick/recherche/issues/24)) ([6d9db74](https://github.com/manojkarthick/recherche/commit/6d9db7481c25f88c30cc7b883bc5db4bdc526f3d))
+* **web:** restyle the UI as a noir dev tool ([#23](https://github.com/manojkarthick/recherche/issues/23)) ([ba53d31](https://github.com/manojkarthick/recherche/commit/ba53d3186bc69c1c64036c6f7cd7e84ff9746555))
+
+
+### Bug Fixes
+
+* **extract:** stop file contents and search output from naming repos and PRs ([#27](https://github.com/manojkarthick/recherche/issues/27)) ([bb7742c](https://github.com/manojkarthick/recherche/commit/bb7742cbefccc7be10647d1a1c086a8ce314a632))
+
 ## 0.1.0 (2026-11-14)
 
 
