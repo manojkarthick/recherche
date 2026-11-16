@@ -139,6 +139,8 @@ fn main() -> Result<()> {
                 .unwrap_or_else(|_| "recherche=info".into()),
         )
         .with_writer(std::io::stderr)
+        // Services send stderr to a log file, where colour codes are noise.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .init();
     let cli = Cli::parse();
     let cfg = config::Config::load(cli.config.as_deref())?;
