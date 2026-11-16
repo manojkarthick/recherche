@@ -39,6 +39,8 @@ brew install manojkarthick/tap/recherche
 recherche serve
 ```
 
+To keep it running in the background instead, use `brew services start recherche`.
+
 Prebuilt ZIP archives and SHA-256 checksums are also available on the
 [GitHub Releases page](https://github.com/manojkarthick/recherche/releases).
 They support Apple Silicon macOS 15+, and x86_64/ARM64 Linux on Ubuntu 24.04

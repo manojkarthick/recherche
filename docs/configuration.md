@@ -158,7 +158,19 @@ inherited key even after you leave the directory.
 
 ## Run in the background
 
-After installing the binary at a stable path, run:
+With Homebrew, let `brew services` manage it:
+
+```sh
+brew services start recherche
+```
+
+The service runs `recherche serve` from Homebrew's `opt` path, so it keeps
+working across `brew upgrade`; run `brew services restart recherche` after an
+upgrade to pick up the new binary. Output goes to
+`$(brew --prefix)/var/log/recherche.log`. Stop it with
+`brew services stop recherche`.
+
+Without Homebrew, install the binary at a stable path and run:
 
 ```sh
 recherche install-service
@@ -177,7 +189,8 @@ move the binary, regenerate the definition and reload the service. The macOS
 definition writes stdout and stderr to `serve.log` in the default data directory;
 Linux output is available through the user service's journal.
 
-Services do not inherit the shell environment that ran `install-service`.
+Services do not inherit your shell environment, whether started by
+`brew services` or from `install-service`.
 Custom XDG paths, source-root overrides, and API credentials must be configured
 for the service separately. The generated service also does not preserve a
 `--config` argument from the installation command.
