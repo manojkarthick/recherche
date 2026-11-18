@@ -8,8 +8,10 @@ loopback requests need no token, and a non-loopback server uses the existing
 query-token or cookie described in [Configuration](configuration.md), whose
 failures are a plain-text `401`.
 
-This is a draft without a version prefix or compatibility commitment. The
-implementation is in [`src/api.rs`](../src/api.rs).
+The API is unstable: it has no version prefix, and endpoints and fields can
+change between releases without notice. Use it at your own risk, and expect
+to update clients after upgrading. The implementation is in
+[`src/api.rs`](../src/api.rs).
 
 | Endpoint | Purpose |
 | --- | --- |
