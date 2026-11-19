@@ -354,18 +354,13 @@ pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
             line: 0,
         });
     }
-    let branches = cat.entities_of(&s.id, "branch");
-    if let Some(b) = branches
-        .iter()
-        .find(|b| b.origin == "recorded" && b.key != "main" && b.key != "master")
-        .or(branches.first())
-    {
+    if let Some(branch) = cat.primary_branch(&s.id) {
         chips.push(Chip {
-            label: b.key.clone(),
-            href: format!("/e?kind=branch&key={}", enc(&b.key)),
+            label: branch.to_string(),
+            href: format!("/e?kind=branch&key={}", enc(branch)),
             class: "chip branch",
             title: "Branch".into(),
-            github: github_url("branch", &b.key, s.repo_key.as_deref()),
+            github: github_url("branch", branch, s.repo_key.as_deref()),
             hit: false,
             line: 0,
         });

@@ -117,9 +117,12 @@ to disable models throughout indexing and search.
 
 `search --json` and `list --json` print JSON arrays to stdout, with logs and
 counts on stderr. Both include `id`, `agent`, `title`, `repo`, `cwd`, `started`,
-`ended`, and `resume`. Search also includes `score` and `reasons`. Timestamps
-are Unix seconds; missing repositories and directories are `null`. Empty
-results print `[]`. `list` defaults to 10 sessions, with no time cutoff.
+`ended`, and `resume`. `list --json` also includes `branch`, `turn_count`,
+`summary`, `kind`, and `outcome`; `search --json` also includes `score` and
+`reasons`. Timestamps are Unix seconds; missing repositories, directories,
+branches, and summary fields are `null`. Empty results print `[]`. `list`
+defaults to 10 sessions, with no time cutoff, and supports `--repo`, `--agent`,
+`--since`, and `--limit`.
 
 ## Optional summaries and query expansion
 

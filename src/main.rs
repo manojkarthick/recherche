@@ -6,6 +6,7 @@ mod eval;
 mod extract;
 mod ingest;
 mod lexical;
+mod list;
 mod llm;
 mod model;
 mod models;
@@ -46,6 +47,12 @@ enum Cmd {
     },
     /// List sessions, newest activity first.
     List {
+        /// Restrict to a repository known to the archive.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Restrict to an agent (`claude` or `codex`).
+        #[arg(long)]
+        agent: Option<String>,
         /// Maximum number of sessions to show.
         #[arg(long, default_value_t = 10)]
         limit: usize,
@@ -158,40 +165,29 @@ fn main() -> Result<()> {
                 t.elapsed().as_secs_f32()
             );
         }
-        Cmd::List { limit, since, json } => {
+        Cmd::List {
+            repo,
+            agent,
+            limit,
+            since,
+            json,
+        } => {
             let engine = search::Engine::open(cfg)?;
             // Listing needs current metadata, but no embeddings.
             if let Err(e) = engine.refresh_with(false, false) {
                 tracing::debug!("catch-up index skipped: {e:#}");
             }
             let cat = engine.catalog();
-            let sessions = cat.recent(since, limit);
+            let (sessions, total) = cat.recent(repo.as_deref(), agent.as_deref(), since, limit);
             if json {
-                let out: Vec<_> = sessions
-                    .iter()
-                    .map(|s| {
-                        serde_json::json!({
-                            "id": s.id, "agent": s.source, "title": s.title,
-                            "repo": cat.repo_name(s), "cwd": s.cwd,
-                            "started": s.started, "ended": s.ended,
-                            "resume": resume_command(s),
-                        })
-                    })
-                    .collect();
-                println!("{}", serde_json::to_string_pretty(&out)?);
+                println!("{}", list::to_json(&cat, &sessions)?);
             } else {
-                for s in &sessions {
-                    println!(
-                        "{}  {:<6} {:<28} {}",
-                        util::fmt_date(s.ended),
-                        s.source,
-                        model::clip_chars(&cat.repo_name(s).unwrap_or_default(), 28),
-                        model::clip_chars(&s.title, 80)
-                    );
-                    println!("    {}", resume_command(s));
-                }
+                print!(
+                    "{}",
+                    list::format_timeline(&cat, &sessions, list::use_color())
+                );
             }
-            eprintln!("{} sessions listed", sessions.len());
+            eprintln!("{}", list::footer(sessions.len(), total));
         }
         Cmd::Search {
             query,
@@ -563,6 +559,8 @@ mod tests {
         assert!(matches!(
             cli.cmd,
             Cmd::List {
+                repo: None,
+                agent: None,
                 limit: 10,
                 since: None,
                 json: false,
@@ -572,6 +570,10 @@ mod tests {
         let cli = Cli::try_parse_from([
             "recherche",
             "list",
+            "--repo",
+            "billing",
+            "--agent",
+            "claude",
             "--limit",
             "125",
             "--since",
@@ -579,9 +581,18 @@ mod tests {
             "--json",
         ])
         .unwrap();
-        let Cmd::List { limit, since, json } = cli.cmd else {
+        let Cmd::List {
+            repo,
+            agent,
+            limit,
+            since,
+            json,
+        } = cli.cmd
+        else {
             panic!("expected list command");
         };
+        assert_eq!(repo.as_deref(), Some("billing"));
+        assert_eq!(agent.as_deref(), Some("claude"));
         assert_eq!(limit, 125);
         assert_eq!(since, query::parse_date("2026-01-02"));
         assert!(json);

@@ -266,15 +266,43 @@ impl Catalog {
         Ok(cat)
     }
 
-    pub fn recent(&self, since: Option<i64>, limit: usize) -> Vec<&SessionMeta> {
+    pub fn recent(
+        &self,
+        repo: Option<&str>,
+        agent: Option<&str>,
+        since: Option<i64>,
+        limit: usize,
+    ) -> (Vec<&SessionMeta>, usize) {
+        let resolved_repo =
+            repo.map(|r| crate::query::resolve_repo(self, r).unwrap_or_else(|| r.to_string()));
+        let agent = agent.map(str::to_lowercase);
         let mut sessions: Vec<_> = self
             .sessions
             .values()
             .filter(|s| since.is_none_or(|since| s.ended >= since))
+            .filter(|s| {
+                resolved_repo.as_deref().is_none_or(|r| {
+                    s.repo_key.as_deref() == Some(r)
+                        || self.repo_name(s).is_some_and(|n| n.eq_ignore_ascii_case(r))
+                })
+            })
+            .filter(|s| agent.as_deref().is_none_or(|a| s.source == a))
             .collect();
+        let total = sessions.len();
         sessions.sort_by(|a, b| b.ended.cmp(&a.ended).then_with(|| a.id.cmp(&b.id)));
         sessions.truncate(limit);
-        sessions
+        (sessions, total)
+    }
+
+    /// Preferred branch for display: the first recorded non-default branch,
+    /// falling back to any associated branch entity.
+    pub fn primary_branch(&self, id: &str) -> Option<&str> {
+        let branches = self.entities_of(id, "branch");
+        branches
+            .iter()
+            .find(|b| b.origin == "recorded" && b.key != "main" && b.key != "master")
+            .or(branches.first())
+            .map(|b| b.key.as_str())
     }
 
     pub fn repo_name(&self, s: &SessionMeta) -> Option<String> {
@@ -393,17 +421,58 @@ mod tests {
         .unwrap();
 
         let cat = Catalog::load(&c).unwrap();
-        let all = cat.recent(None, 200);
+        let (all, total) = cat.recent(None, None, None, 200);
+        assert_eq!(total, 125);
         assert_eq!(all.len(), 125);
         assert_eq!(all.first().unwrap().id, "session-124");
         assert_eq!(all.last().unwrap().id, "session-000");
         assert!(all.windows(2).all(|s| s[0].ended > s[1].ended));
 
-        let recent = cat.recent(Some(120), 10);
+        let (recent, total) = cat.recent(None, None, Some(120), 10);
+        assert_eq!(total, 5);
         assert_eq!(recent.len(), 5);
         assert_eq!(recent.last().unwrap().ended, 120);
-        assert_eq!(cat.recent(Some(120), 2).len(), 2);
-        assert!(cat.recent(Some(125), 10).is_empty());
-        assert!(cat.recent(None, 0).is_empty());
+        let (capped, total) = cat.recent(None, None, Some(120), 2);
+        assert_eq!(capped.len(), 2);
+        assert_eq!(total, 5);
+        assert!(cat.recent(None, None, Some(125), 10).0.is_empty());
+        assert!(cat.recent(None, None, None, 0).0.is_empty());
+    }
+
+    #[test]
+    fn recent_filtered_matches_repo_agent_and_reports_total() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute_batch(
+            "INSERT INTO sessions (id, source, host, archive_path, ended, turn_count, repo_key) VALUES
+             ('c1', 'claude', '', '', 300, 2, 'github.com/northwind/billing'),
+             ('c2', 'claude', '', '', 200, 1, 'github.com/northwind/billing'),
+             ('x1', 'codex', '', '', 250, 4, 'github.com/northwind/widgets'),
+             ('x2', 'codex', '', '', 100, 1, 'github.com/northwind/billing');
+             INSERT INTO entities (session_id, kind, key, display, origin, strength) VALUES
+             ('c1', 'branch', 'main', 'main', 'recorded', 2),
+             ('c1', 'branch', 'feat/proration', 'feat/proration', 'recorded', 1),
+             ('x1', 'branch', 'main', 'main', 'recorded', 1);",
+        )
+        .unwrap();
+
+        let cat = Catalog::load(&c).unwrap();
+        let (rows, total) = cat.recent(Some("billing"), None, None, 2);
+        assert_eq!(total, 3);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "c1");
+        assert_eq!(rows[1].id, "c2");
+
+        let (rows, total) = cat.recent(Some("northwind/billing"), Some("Claude"), None, 10);
+        assert_eq!(total, 2);
+        assert_eq!(rows.len(), 2);
+
+        let (rows, total) = cat.recent(None, Some("codex"), Some(200), 10);
+        assert_eq!(total, 1);
+        assert_eq!(rows[0].id, "x1");
+
+        assert_eq!(cat.primary_branch("c1"), Some("feat/proration"));
+        assert_eq!(cat.primary_branch("x1"), Some("main"));
+        assert_eq!(cat.primary_branch("c2"), None);
     }
 }
