@@ -93,6 +93,9 @@ pub fn summary_estimate(p: &Prices, digest_chars: usize) -> f64 {
 
 impl Llm {
     pub fn new(cfg: config::Llm, db: PathBuf) -> Self {
+        // reqwest panics building a client when no rustls provider is
+        // installed. Err only means one is already installed.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         Self {
             cfg,
             db,
