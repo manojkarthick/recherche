@@ -64,11 +64,15 @@ pub fn footer(shown: usize, total: usize) -> String {
 }
 
 fn title_width() -> usize {
+    title_width_for(GUTTER_WIDTH)
+}
+
+pub(crate) fn title_width_for(gutter: usize) -> usize {
     let cols = std::env::var("COLUMNS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(DEFAULT_COLUMNS);
-    cols.saturating_sub(GUTTER_WIDTH).clamp(40, 120)
+    cols.saturating_sub(gutter).clamp(40, 120)
 }
 
 pub fn format_timeline_at(
@@ -157,7 +161,7 @@ fn format_day_header(day: Option<NaiveDate>, today: NaiveDate, style: &Style) ->
     }
 }
 
-fn format_title(raw: &str, max_chars: usize, style: &Style) -> String {
+pub(crate) fn format_title(raw: &str, max_chars: usize, style: &Style) -> String {
     let clean = normalize_whitespace(raw);
     if clean.is_empty() {
         style.dim("Untitled session")
@@ -245,8 +249,8 @@ fn clip_display(s: &str, max_chars: usize) -> String {
     format!("{}…", prefix.trim_end())
 }
 
-struct Style {
-    color: bool,
+pub(crate) struct Style {
+    pub(crate) color: bool,
 }
 
 impl Style {
@@ -258,15 +262,15 @@ impl Style {
         }
     }
 
-    fn bold(&self, s: &str) -> String {
+    pub(crate) fn bold(&self, s: &str) -> String {
         self.paint("1", s)
     }
 
-    fn dim(&self, s: &str) -> String {
+    pub(crate) fn dim(&self, s: &str) -> String {
         self.paint("2", s)
     }
 
-    fn red(&self, s: &str) -> String {
+    pub(crate) fn red(&self, s: &str) -> String {
         self.paint("31", s)
     }
 
@@ -290,7 +294,7 @@ impl Style {
         self.paint("36", s)
     }
 
-    fn agent(&self, source: &str, s: &str) -> String {
+    pub(crate) fn agent(&self, source: &str, s: &str) -> String {
         match source {
             "claude" => self.yellow(s),
             "codex" => self.cyan(s),

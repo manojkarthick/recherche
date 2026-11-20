@@ -13,6 +13,7 @@ mod models;
 mod parse;
 mod query;
 mod search;
+mod search_fmt;
 mod store;
 mod summarize;
 mod util;
@@ -139,17 +140,31 @@ enum Cmd {
     },
 }
 
+fn default_log_filter(cmd: &Cmd) -> &'static str {
+    match cmd {
+        Cmd::Serve { .. } | Cmd::Demo { .. } | Cmd::Index { .. } | Cmd::Summarize { .. } => {
+            "recherche=info"
+        }
+        Cmd::Search { .. }
+        | Cmd::List { .. }
+        | Cmd::Open { .. }
+        | Cmd::Eval { .. }
+        | Cmd::InstallService
+        | Cmd::Doctor => "recherche=warn",
+    }
+}
+
 fn main() -> Result<()> {
+    let cli = Cli::parse();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("RECHERCHE_LOG")
-                .unwrap_or_else(|_| "recherche=info".into()),
+                .unwrap_or_else(|_| default_log_filter(&cli.cmd).into()),
         )
         .with_writer(std::io::stderr)
         // Services send stderr to a log file, where colour codes are noise.
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .init();
-    let cli = Cli::parse();
     let cfg = config::Config::load(cli.config.as_deref())?;
     match cli.cmd {
         Cmd::Index { rebuild } => {
@@ -376,44 +391,19 @@ fn print_results(
     json: bool,
 ) -> Result<()> {
     let cat = engine.catalog();
-    if json {
-        let out: Vec<_> = res
-            .hits
-            .iter()
-            .take(limit)
-            .filter_map(|h| {
-                let s = cat.sessions.get(&h.session)?;
-                Some(serde_json::json!({
-                    "id": s.id, "agent": s.source, "title": s.title, "repo": cat.repo_name(s), "cwd": s.cwd,
-                    "started": s.started, "ended": s.ended, "score": h.score, "reasons": h.reasons,
-                    "resume": resume_command(s),
-                }))
-            })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&out)?);
-        return Ok(());
-    }
+    let displayed = search_fmt::collect_hits(&cat, &res.hits, limit);
     for note in &res.notes {
         eprintln!("note: {note}");
     }
-    for h in res.hits.iter().take(limit) {
-        let Some(s) = cat.sessions.get(&h.session) else {
-            continue;
-        };
-        println!(
-            "{:>6.3}  {}  {:<6} {:<28} {}",
-            h.score,
-            util::fmt_date(s.ended),
-            s.source,
-            model::clip_chars(&cat.repo_name(s).unwrap_or_default(), 28),
-            model::clip_chars(&s.title, 80)
+    if json {
+        println!("{}", search_fmt::to_json(&cat, &displayed)?);
+    } else {
+        print!(
+            "{}",
+            search_fmt::format_results(&cat, &displayed, list::use_color())
         );
-        println!("        {}  [{}]", resume_command(s), h.reasons.join(", "));
     }
-    eprintln!(
-        "{} sessions matched, {} ms ({})",
-        res.total, res.took_ms, res.stage
-    );
+    eprintln!("{}", search_fmt::footer(displayed.len(), res));
     Ok(())
 }
 
@@ -611,6 +601,28 @@ mod tests {
                 Cli::try_parse_from(["recherche", "list", flag, value]).is_err(),
                 "accepted {flag} {value}"
             );
+        }
+    }
+
+    #[test]
+    fn quiet_cli_commands_default_to_warn_logging() {
+        for argv in [
+            ["recherche", "search", "billing"].as_slice(),
+            ["recherche", "list"].as_slice(),
+            ["recherche", "doctor"].as_slice(),
+            ["recherche", "eval"].as_slice(),
+        ] {
+            let cli = Cli::try_parse_from(argv).unwrap();
+            assert_eq!(default_log_filter(&cli.cmd), "recherche=warn");
+        }
+        for argv in [
+            ["recherche", "serve"].as_slice(),
+            ["recherche", "index"].as_slice(),
+            ["recherche", "summarize"].as_slice(),
+            ["recherche", "demo"].as_slice(),
+        ] {
+            let cli = Cli::try_parse_from(argv).unwrap();
+            assert_eq!(default_log_filter(&cli.cmd), "recherche=info");
         }
     }
 }
