@@ -12,20 +12,23 @@ askama = "0.16"
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6", features = ["derive"] }
-fastembed = "7.7"
-futures = "0.3"
+# Defaults add image models and native-tls downloads, neither of which is used.
+fastembed = { version = "7.7", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls"] }
 gethostname = "1"
 notify = "8"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 regex = "1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 rust-embed = "8"
+# ring, not the default aws-lc-rs, whose build script dominates clean builds.
+# reqwest is built without a provider, so `Llm::new` installs this one.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 tantivy = "0.27"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-stream = "0.1"
 toml = "1"
 tracing = "0.1"
