@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/manojkarthick/recherche/compare/v0.2.0...v0.3.0) (2026-11-20)
+
+
+### Features
+
+* **cli:** format list as a date-grouped timeline with filters ([#30](https://github.com/manojkarthick/recherche/issues/30)) ([84c8b42](https://github.com/manojkarthick/recherche/commit/84c8b42ba0939705f1a5afc4a0396e1786cd171a))
+* **cli:** format search as ranked cards and quiet CLI info logs ([#33](https://github.com/manojkarthick/recherche/issues/33)) ([2039613](https://github.com/manojkarthick/recherche/commit/20396137fbb2e4a94abd4866e2878c6daf4b0ff4))
+
 ## [0.2.0](https://github.com/manojkarthick/recherche/compare/v0.1.0...v0.2.0) (2026-11-16)
 
 
