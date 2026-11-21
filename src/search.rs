@@ -559,8 +559,8 @@ mod tests {
             [],
         )?;
         let mut cfg = Config::default();
-        cfg.sources.claude_dir = Some(dir.path().join("claude"));
-        cfg.sources.codex_dir = Some(dir.path().join("codex"));
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.llm.enabled = false;
         cfg.search.rerank = false;
         let cli = Engine::open_in(cfg.clone(), dir.path())?;

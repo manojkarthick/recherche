@@ -20,9 +20,15 @@ worktree_patterns = [
 ]
 
 [sources]
-# claude_dir = "~/.claude"   # default: $CLAUDE_CONFIG_DIR, then ~/.claude
-# codex_dir = "~/.codex"     # default: $CODEX_HOME, then ~/.codex
 poll_seconds = 30
+
+[sources.claude]
+# dir = "~/.claude"                 # default: $CLAUDE_CONFIG_DIR, then ~/.claude
+exclude_entrypoints = ["sdk-cli"]   # `claude -p` runs
+
+[sources.codex]
+# dir = "~/.codex"                  # default: $CODEX_HOME, then ~/.codex
+exclude_sources = ["exec"]          # `codex exec` runs
 
 [search]
 vectors = true

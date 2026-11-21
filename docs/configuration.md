@@ -17,8 +17,8 @@ recherche uses XDG locations on every supported OS, including macOS:
 | Evaluation queries | `~/.config/recherche/eval.toml` | `$XDG_CONFIG_HOME/recherche/eval.toml`, or `eval --file <path>` |
 | Archive, database, keyword index | `~/.local/share/recherche/` | `$XDG_DATA_HOME/recherche/`, or `RECHERCHE_DATA_DIR` for the complete data path |
 | Downloaded models | `~/.cache/recherche/models/` | `$XDG_CACHE_HOME/recherche/models/` |
-| Claude Code root | `~/.claude/` | `CLAUDE_CONFIG_DIR`, or `sources.claude_dir` |
-| Codex root | `~/.codex/` | `CODEX_HOME`, or `sources.codex_dir` |
+| Claude Code root | `~/.claude/` | `CLAUDE_CONFIG_DIR`, or `sources.claude.dir` |
+| Codex root | `~/.codex/` | `CODEX_HOME`, or `sources.codex.dir` |
 
 An explicit source setting takes precedence over its environment variable.
 `RECHERCHE_DATA_DIR` takes precedence over `XDG_DATA_HOME`. Selecting a different
@@ -36,12 +36,39 @@ Use absolute paths in TOML source settings; the application does not expand
 
 ```toml
 [sources]
-claude_dir = "/absolute/path/to/claude-data"
-codex_dir = "/absolute/path/to/codex-data"
 poll_seconds = 30
+
+[sources.claude]
+dir = "/absolute/path/to/claude-data"
+
+[sources.codex]
+dir = "/absolute/path/to/codex-data"
 ```
 
 Restart `serve` after changing configuration or environment variables.
+
+### Headless sessions
+
+Scripts that run an agent non-interactively leave session files too, often
+dozens with the same one-line prompt. By default recherche archives them but
+leaves them out of search and the recent list:
+
+```toml
+[sources.claude]
+exclude_entrypoints = ["sdk-cli"]   # `claude -p`
+
+[sources.codex]
+exclude_sources = ["exec"]          # `codex exec`
+```
+
+Claude Code records an `entrypoint` on each line of a session, and Codex
+records a `source` in the session's first line. A Claude session is left out
+only when every entrypoint in it is listed, so a terminal session later
+continued with `claude -p --resume` stays. Sessions without an entrypoint
+are always kept. Set a list to `[]` to index everything.
+
+The lists apply when a session file is parsed. After changing them, run
+`recherche index --rebuild` so already indexed sessions are re-evaluated.
 
 ## Local search models
 

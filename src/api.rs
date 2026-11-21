@@ -365,8 +365,8 @@ second line', errors = 'Stored error',
                     ('hidden', 'ticket', 'PROJ-123', 'PROJ-123', 'parsed', 1);"#
         ).unwrap();
         let mut cfg = crate::config::Config::default();
-        cfg.sources.claude_dir = Some(dir.path().join("claude"));
-        cfg.sources.codex_dir = Some(dir.path().join("codex"));
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.search.rerank = false;
         cfg.llm.enabled = false;
         let engine = Engine::open_in(cfg, dir.path()).unwrap();

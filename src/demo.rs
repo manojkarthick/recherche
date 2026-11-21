@@ -110,8 +110,8 @@ pub fn prepare(mut cfg: Config, dir: &Path) -> Result<Engine> {
     }
     std::fs::create_dir_all(dir)?;
     std::fs::write(dir.join(MARKER), "")?;
-    cfg.sources.claude_dir = Some(dir.join("claude"));
-    cfg.sources.codex_dir = Some(dir.join("codex"));
+    cfg.sources.claude.dir = Some(dir.join("claude"));
+    cfg.sources.codex.dir = Some(dir.join("codex"));
     // The UI explains missing summaries only when summaries are on, which
     // needs a key. Any set variable will do: the API is a closed local port,
     // so made-up sessions are never sent anywhere.
