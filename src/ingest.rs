@@ -32,16 +32,16 @@ pub struct Stats {
 fn discover(cfg: &Config) -> Vec<(&'static str, PathBuf, PathBuf)> {
     let mut out = vec![];
     let claude = cfg.claude_dir().join("projects");
-    walk(&claude, &mut |p| {
-        if let Ok(rel) = p.strip_prefix(&claude) {
+    walk(&claude, &mut |p, plain| {
+        if let Ok(rel) = plain.strip_prefix(&claude) {
             out.push(("claude", p.to_path_buf(), Path::new("projects").join(rel)));
         }
     });
     let codex = cfg.codex_dir();
     for sub in ["sessions", "archived_sessions"] {
         let root = codex.join(sub);
-        walk(&root, &mut |p| {
-            if let Ok(rel) = p.strip_prefix(&codex) {
+        walk(&root, &mut |p, plain| {
+            if let Ok(rel) = plain.strip_prefix(&codex) {
                 out.push(("codex", p.to_path_buf(), rel.to_path_buf()));
             }
         });
@@ -49,7 +49,11 @@ fn discover(cfg: &Config) -> Vec<(&'static str, PathBuf, PathBuf)> {
     out
 }
 
-fn walk(dir: &Path, f: &mut dyn FnMut(&Path)) {
+/// Calls `f` with each session file and the plain `.jsonl` path it is
+/// archived under. Codex compresses rollouts that haven't changed for a week
+/// to `.jsonl.zst`, and writes plain `.jsonl` again when one is resumed. While
+/// both exist, the plain file is the current one.
+fn walk(dir: &Path, f: &mut dyn FnMut(&Path, &Path)) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
@@ -57,10 +61,20 @@ fn walk(dir: &Path, f: &mut dyn FnMut(&Path)) {
         let p = e.path();
         match e.file_type() {
             Ok(t) if t.is_dir() => walk(&p, f),
-            Ok(t) if t.is_file() && p.extension().is_some_and(|x| x == "jsonl") => f(&p),
+            Ok(t) if t.is_file() && p.extension().is_some_and(|x| x == "jsonl") => f(&p, &p),
+            Ok(t) if t.is_file() && is_compressed(&p) => {
+                let plain = p.with_extension("");
+                if !plain.exists() {
+                    f(&p, &plain);
+                }
+            }
             _ => {}
         }
     }
+}
+
+fn is_compressed(p: &Path) -> bool {
+    p.to_str().is_some_and(|s| s.ends_with(".jsonl.zst"))
 }
 
 fn prefix_hash(path: &Path) -> Result<String> {
@@ -80,9 +94,12 @@ fn sync_archive(
 ) -> Result<()> {
     std::fs::create_dir_all(dst.parent().unwrap())?;
     let archived = std::fs::metadata(dst).map(|m| m.len() as i64).ok();
+    // A compressed file is written whole, and its size is the compressed one,
+    // so it is always decompressed whole rather than appended.
+    let compressed = is_compressed(src);
     match (old, archived) {
         (Some((old_size, old_prefix)), Some(a))
-            if old_prefix == prefix && size >= *old_size && a == *old_size =>
+            if !compressed && old_prefix == prefix && size >= *old_size && a == *old_size =>
         {
             let mut from = std::fs::File::open(src)?;
             from.seek(SeekFrom::Start(*old_size as u64))?;
@@ -92,7 +109,12 @@ fn sync_archive(
         }
         _ => {
             let tmp = dst.with_extension("jsonl.tmp");
-            std::fs::copy(src, &tmp)?;
+            if compressed {
+                let mut to = std::fs::File::create(&tmp)?;
+                zstd::stream::copy_decode(std::fs::File::open(src)?, &mut to)?;
+            } else {
+                std::fs::copy(src, &tmp)?;
+            }
             std::fs::rename(&tmp, dst)?;
         }
     }
@@ -587,6 +609,57 @@ mod tests {
         let skipped: Vec<&str> = rows.iter().filter(|r| r.1).map(|r| r.0.as_str()).collect();
         assert_eq!(rows.len(), 6);
         assert_eq!(skipped, ["exec", "print"]);
+        Ok(())
+    }
+
+    #[test]
+    fn compressed_rollouts_are_read() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let day = dir.path().join("codex/sessions/2026/01/01");
+        std::fs::create_dir_all(&day)?;
+        let zst = |name: &str, text: &str| -> Result<()> {
+            let bytes = zstd::encode_all(text.as_bytes(), 0)?;
+            Ok(std::fs::write(day.join(name), bytes)?)
+        };
+        let user = |text: &str| {
+            serde_json::json!({
+                "timestamp": "2026-01-01T00:00:01Z", "type": "event_msg",
+                "payload": {"type": "user_message", "message": text},
+            })
+            .to_string()
+        };
+        let cold = format!("{}\n{}\n", codex_meta("cold", "cli"), user("old work"));
+        let warm = format!("{}\n{}\n", codex_meta("warm", "cli"), user("first"));
+        zst("rollout-cold.jsonl.zst", &cold)?;
+        std::fs::write(day.join("rollout-warm.jsonl"), &warm)?;
+
+        let mut cfg = Config::default();
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
+        let archive = dir.path().join("archive");
+        let ing = Ingester::new(&cfg, archive.clone());
+        let turns = |c: &Connection| -> Result<Vec<(String, i64)>> {
+            let mut st = c.prepare("SELECT id, turn_count FROM sessions ORDER BY id")?;
+            Ok(st
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<_, _>>()?)
+        };
+        ing.run(&mut c, false)?;
+        assert_eq!(turns(&c)?, [("cold".into(), 1), ("warm".into(), 1)]);
+        let archived = archive.join("codex/sessions/2026/01/01/rollout-cold.jsonl");
+        assert_eq!(std::fs::read_to_string(archived)?, cold);
+
+        // Codex compresses the warm session, then a resume writes plain
+        // JSONL again before the compressed copy is removed.
+        let warm2 = format!("{warm}{}\n", user("second"));
+        std::fs::remove_file(day.join("rollout-warm.jsonl"))?;
+        zst("rollout-warm.jsonl.zst", &warm)?;
+        ing.run(&mut c, false)?;
+        assert_eq!(turns(&c)?, [("cold".into(), 1), ("warm".into(), 1)]);
+        std::fs::write(day.join("rollout-warm.jsonl"), &warm2)?;
+        ing.run(&mut c, false)?;
+        assert_eq!(turns(&c)?, [("cold".into(), 1), ("warm".into(), 2)]);
         Ok(())
     }
 }
