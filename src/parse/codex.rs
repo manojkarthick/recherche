@@ -1,4 +1,5 @@
-//! Codex sessions: `<codex_dir>/sessions/YYYY/MM/DD/rollout-*.jsonl`.
+//! Codex sessions: `<codex_dir>/sessions/YYYY/MM/DD/rollout-*.jsonl`, or
+//! `.jsonl.zst` once Codex compresses them; ingest decompresses those.
 //!
 //! Current Codex writes typed `item_completed` events (UserMessage,
 //! AgentMessage, CommandExecution, FileChange, McpToolCall). Older files only

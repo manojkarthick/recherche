@@ -159,7 +159,7 @@ fn write(dir: &Path, name: &str, f: &Fixture, now: DateTime<Utc>) -> Result<Stri
     let start = now - parse_ago(&f.ago)?;
     let (path, lines, id) = match f.agent {
         Agent::Claude => claude(dir, name, f, &cwd, start)?,
-        Agent::Codex => codex(dir, name, f, &cwd, start)?,
+        Agent::Codex => codex(dir, name, f, &cwd, start, now)?,
     };
     std::fs::create_dir_all(path.parent().unwrap())?;
     let mut text = String::new();
@@ -167,11 +167,19 @@ fn write(dir: &Path, name: &str, f: &Fixture, now: DateTime<Utc>) -> Result<Stri
         text.push_str(&l.to_string());
         text.push('\n');
     }
-    std::fs::write(&path, text)?;
+    if is_compressed(&path) {
+        std::fs::write(&path, zstd::encode_all(text.as_bytes(), 0)?)?;
+    } else {
+        std::fs::write(&path, text)?;
+    }
     Ok(id)
 }
 
 type Session = (std::path::PathBuf, Vec<Value>, String);
+
+fn is_compressed(p: &Path) -> bool {
+    p.extension().is_some_and(|x| x == "zst")
+}
 
 fn claude(dir: &Path, name: &str, f: &Fixture, cwd: &str, start: DateTime<Utc>) -> Result<Session> {
     let model = f.model.as_deref().unwrap_or("claude-opus-4-5");
@@ -265,7 +273,14 @@ fn claude(dir: &Path, name: &str, f: &Fixture, cwd: &str, start: DateTime<Utc>) 
     })
 }
 
-fn codex(dir: &Path, name: &str, f: &Fixture, cwd: &str, start: DateTime<Utc>) -> Result<Session> {
+fn codex(
+    dir: &Path,
+    name: &str,
+    f: &Fixture,
+    cwd: &str,
+    start: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<Session> {
     if f.title.is_some() || f.pr.is_some() || f.parent.is_some() {
         bail!("`title`, `pr` and `parent` are Claude-only");
     }
@@ -311,11 +326,17 @@ fn codex(dir: &Path, name: &str, f: &Fixture, cwd: &str, start: DateTime<Utc>) -
         ));
         t += Duration::minutes(4);
     }
+    // Codex compresses rollouts that haven't changed for a week.
+    let ext = if now - t > Duration::days(7) {
+        "jsonl.zst"
+    } else {
+        "jsonl"
+    };
     let path = dir
         .join("codex/sessions")
         .join(start.format("%Y/%m/%d").to_string())
         .join(format!(
-            "rollout-{}-{sid}.jsonl",
+            "rollout-{}-{sid}.{ext}",
             start.format("%Y-%m-%dT%H-%M-%S")
         ));
     Ok((path, lines, sid))
@@ -412,6 +433,12 @@ mod tests {
             }
         }
         let engine = prepare(cfg, dir.path())?;
+        let compressed: i64 = engine.conn()?.query_row(
+            "SELECT COUNT(*) FROM files WHERE src_path LIKE '%.jsonl.zst'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert!(compressed > 0, "no compressed Codex sessions");
         let cat = engine.catalog();
         assert_eq!(cat.sessions.len(), fixtures.len());
         let summarized = fixtures.iter().filter(|f| f.1.summary.is_some()).count();

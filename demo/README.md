@@ -9,7 +9,8 @@ cargo run -- demo /tmp/other --listen 127.0.0.1:7779
 ```
 
 Each run replaces the directory. It writes the sessions as Claude Code and Codex
-would, indexes them, stores their summaries and starts the server. Your own
+would, including compressing Codex sessions idle for over a week to
+`.jsonl.zst`, indexes them, stores their summaries and starts the server. Your own
 sessions and data are not touched. Summaries are on, so the UI explains missing
 ones, but the API is a closed local port, so nothing is sent anywhere. The first
 run of `serve` is dated 30 days back: older sessions without a summary show the

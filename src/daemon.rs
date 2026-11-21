@@ -21,7 +21,7 @@ pub fn run(e: Arc<Engine>) {
             && ev
                 .paths
                 .iter()
-                .any(|p| p.extension().is_some_and(|x| x == "jsonl"))
+                .any(|p| p.extension().is_some_and(|x| x == "jsonl" || x == "zst"))
         {
             let _ = tx.send(());
         }
