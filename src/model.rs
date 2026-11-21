@@ -21,6 +21,10 @@ pub struct ParsedSession {
     pub facts: Vec<Fact>,
     /// Sessions that are not the user's work, such as automatic approval reviews.
     pub skip: bool,
+    /// How the session was started: every Claude `entrypoint` seen, or the
+    /// Codex `session_meta.source` when it is a string. Matched against the
+    /// source's exclude list in the config.
+    pub origins: Vec<String>,
     /// Complete lines that were not valid JSON.
     pub bad_lines: usize,
 }

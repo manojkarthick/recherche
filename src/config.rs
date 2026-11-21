@@ -26,9 +26,27 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Sources {
-    pub claude_dir: Option<PathBuf>,
-    pub codex_dir: Option<PathBuf>,
+    pub claude: ClaudeSource,
+    pub codex: CodexSource,
     pub poll_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ClaudeSource {
+    pub dir: Option<PathBuf>,
+    /// Sessions whose every `entrypoint` is listed here are not indexed.
+    /// `sdk-cli` is `claude -p`.
+    pub exclude_entrypoints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CodexSource {
+    pub dir: Option<PathBuf>,
+    /// Sessions whose `session_meta.source` is listed here are not indexed.
+    /// `exec` is `codex exec`.
+    pub exclude_sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -102,9 +120,27 @@ impl Default for Config {
 impl Default for Sources {
     fn default() -> Self {
         Self {
-            claude_dir: None,
-            codex_dir: None,
+            claude: ClaudeSource::default(),
+            codex: CodexSource::default(),
             poll_seconds: 30,
+        }
+    }
+}
+
+impl Default for ClaudeSource {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            exclude_entrypoints: vec!["sdk-cli".into()],
+        }
+    }
+}
+
+impl Default for CodexSource {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            exclude_sources: vec!["exec".into()],
         }
     }
 }
@@ -181,7 +217,7 @@ impl Config {
     }
 
     pub fn claude_dir(&self) -> PathBuf {
-        self.sources.claude_dir.clone().unwrap_or_else(|| {
+        self.sources.claude.dir.clone().unwrap_or_else(|| {
             match std::env::var_os("CLAUDE_CONFIG_DIR") {
                 Some(d) => PathBuf::from(d),
                 None => home().join(".claude"),
@@ -191,7 +227,8 @@ impl Config {
 
     pub fn codex_dir(&self) -> PathBuf {
         self.sources
-            .codex_dir
+            .codex
+            .dir
             .clone()
             .unwrap_or_else(|| match std::env::var_os("CODEX_HOME") {
                 Some(d) => PathBuf::from(d),

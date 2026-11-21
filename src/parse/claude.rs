@@ -35,6 +35,11 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
         if agent_id.is_none() {
             agent_id = v["agentId"].as_str().map(String::from);
         }
+        if let Some(e) = v["entrypoint"].as_str()
+            && !s.origins.iter().any(|o| o == e)
+        {
+            s.origins.push(e.to_string());
+        }
         if let Some(c) = v["cwd"].as_str() {
             if s.cwd.is_none() {
                 s.cwd = Some(c.to_string());

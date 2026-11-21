@@ -187,7 +187,10 @@ impl<'a> Ingester<'a> {
             // Only parse complete lines; the agent may be mid-write.
             let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
             bytes.truncate(end);
-            let ps = crate::parse::parse(source, &dst, &bytes);
+            let mut ps = crate::parse::parse(source, &dst, &bytes);
+            if self.excluded(&ps) {
+                ps.skip = true;
+            }
             stats.bad_lines += ps.bad_lines;
             if ps.id.is_empty() {
                 continue;
@@ -213,6 +216,16 @@ impl<'a> Ingester<'a> {
         }
         self.link_repos(c)?;
         Ok(stats)
+    }
+
+    /// True when every origin is on the source's exclude list. A session
+    /// with no recorded origin, or one also continued interactively, is kept.
+    fn excluded(&self, ps: &ParsedSession) -> bool {
+        let deny = match ps.source {
+            "claude" => &self.cfg.sources.claude.exclude_entrypoints,
+            _ => &self.cfg.sources.codex.exclude_sources,
+        };
+        !ps.origins.is_empty() && ps.origins.iter().all(|o| deny.contains(o))
     }
 
     fn label(&self, ps: &ParsedSession, before: Option<i64>) -> String {
@@ -501,4 +514,79 @@ pub fn paragraphs(text: &str) -> Vec<String> {
         .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|p| p.len() >= 80)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn claude_line(id: &str, entrypoint: Option<&str>, text: &str) -> String {
+        let mut v = serde_json::json!({
+            "type": "user", "sessionId": id, "cwd": "/repo",
+            "timestamp": "2026-01-01T00:00:00Z", "message": {"role": "user", "content": text},
+        });
+        if let Some(e) = entrypoint {
+            v["entrypoint"] = e.into();
+        }
+        v.to_string()
+    }
+
+    fn codex_meta(id: &str, source: &str) -> String {
+        serde_json::json!({
+            "timestamp": "2026-01-01T00:00:00Z", "type": "session_meta",
+            "payload": {"id": id, "cwd": "/repo", "source": source},
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn excluded_origins_are_skipped() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let project = dir.path().join("claude/projects/repo");
+        std::fs::create_dir_all(&project)?;
+        let write = |name: &str, lines: &[String]| {
+            std::fs::write(project.join(name), lines.join("\n") + "\n")
+        };
+        write(
+            "cli.jsonl",
+            &[claude_line("cli", Some("cli"), "fix the parser")],
+        )?;
+        write(
+            "print.jsonl",
+            &[claude_line("print", Some("sdk-cli"), "Reply with just: ok")],
+        )?;
+        write(
+            "resumed.jsonl",
+            &[
+                claude_line("resumed", Some("cli"), "start in the terminal"),
+                claude_line("resumed", Some("sdk-cli"), "continue with -p"),
+            ],
+        )?;
+        write("old.jsonl", &[claude_line("old", None, "no entrypoint")])?;
+        let day = dir.path().join("codex/sessions/2026/01/01");
+        std::fs::create_dir_all(&day)?;
+        std::fs::write(
+            day.join("rollout-tui.jsonl"),
+            codex_meta("tui", "cli") + "\n",
+        )?;
+        std::fs::write(
+            day.join("rollout-exec.jsonl"),
+            codex_meta("exec", "exec") + "\n",
+        )?;
+
+        let mut cfg = Config::default();
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
+        Ingester::new(&cfg, dir.path().join("archive")).run(&mut c, false)?;
+
+        let mut st = c.prepare("SELECT id, skip FROM sessions ORDER BY id")?;
+        let rows: Vec<(String, bool)> = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        let skipped: Vec<&str> = rows.iter().filter(|r| r.1).map(|r| r.0.as_str()).collect();
+        assert_eq!(rows.len(), 6);
+        assert_eq!(skipped, ["exec", "print"]);
+        Ok(())
+    }
 }

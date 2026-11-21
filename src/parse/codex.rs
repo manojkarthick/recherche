@@ -42,6 +42,10 @@ pub fn parse(path: &Path, bytes: &[u8]) -> ParsedSession {
                     .to_string();
                 s.cwd = p["cwd"].as_str().map(String::from);
                 cwd = s.cwd.clone();
+                // Subagent sources are objects; only plain strings are origins.
+                if let Some(o) = p["source"].as_str() {
+                    s.origins = vec![o.to_string()];
+                }
                 let src = p["source"].to_string();
                 if src.contains("guardian")
                     || p["thread_source"].as_str() == Some("guardian_review")
