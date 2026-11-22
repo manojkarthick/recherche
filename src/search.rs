@@ -15,6 +15,7 @@ use crate::lexical::{LexHit, Lexical};
 use crate::llm::{Llm, Rewrite};
 use crate::models::{Models, VecStore};
 use crate::query::{self, Parsed};
+use crate::queue::TaskQueue;
 use crate::store::{self, Catalog, SessionMeta};
 use anyhow::Result;
 use regex::Regex;
@@ -34,6 +35,7 @@ pub struct Engine {
     pub catalog: RwLock<Arc<Catalog>>,
     pub llm: Llm,
     pub tickets: Vec<Regex>,
+    pub tasks: TaskQueue,
     refresh_lock: Mutex<()>,
 }
 
@@ -94,6 +96,7 @@ impl Engine {
             catalog: RwLock::new(Arc::new(catalog)),
             db,
             cfg,
+            tasks: TaskQueue::new(),
             refresh_lock: Mutex::new(()),
         })
     }
@@ -119,20 +122,50 @@ impl Engine {
         let mut c = self.conn()?;
         let stats = crate::ingest::Ingester::new(&self.cfg, self.db.with_file_name("archive"))
             .run(&mut c, rebuild)?;
+        self.finish_refresh_locked(&mut c, rebuild, embed)?;
+        Ok(stats)
+    }
+
+    /// Re-syncs and reparses one session from disk, then updates Tantivy,
+    /// `Catalog`, and `VecStore` without rescanning the rest of the archive.
+    pub fn reindex_session(&self, session_id: &str) -> Result<()> {
+        let _g = self.refresh_lock.lock().unwrap();
+        let mut c = self.conn()?;
+        crate::ingest::Ingester::new(&self.cfg, self.db.with_file_name("archive"))
+            .reindex_session(&mut c, session_id)?;
+        self.finish_refresh_locked(&mut c, false, false)?;
+        Ok(())
+    }
+
+    /// Updates Tantivy, `Catalog`, and `VecStore` for sessions already marked
+    /// `dirty = 1` in SQLite (for example, right after saving a summary).
+    pub fn index_dirty(&self, embed: bool) -> Result<()> {
+        let _g = self.refresh_lock.lock().unwrap();
+        let mut c = self.conn()?;
+        self.finish_refresh_locked(&mut c, false, embed)?;
+        Ok(())
+    }
+
+    fn finish_refresh_locked(
+        &self,
+        c: &mut rusqlite::Connection,
+        rebuild: bool,
+        embed: bool,
+    ) -> Result<()> {
         self.lex
-            .update(&mut c, self.cfg.search.boilerplate_min_sessions, rebuild)?;
+            .update(c, self.cfg.search.boilerplate_min_sessions, rebuild)?;
         // Another process can finish indexing and clear dirty flags before this
         // pass. Reload readers even when we did not index anything ourselves.
         self.lex.reload()?;
-        *self.catalog.write().unwrap() = Arc::new(Catalog::load(&c)?);
+        *self.catalog.write().unwrap() = Arc::new(Catalog::load(c)?);
         if self.cfg.search.vectors {
-            if embed && let Err(e) = crate::models::embed_missing(&self.models, &c) {
+            if embed && let Err(e) = crate::models::embed_missing(&self.models, c) {
                 tracing::warn!("embedding failed, semantic search is limited: {e:#}");
             }
-            *self.vecs.write().unwrap() = Arc::new(VecStore::load(&c)?);
+            *self.vecs.write().unwrap() = Arc::new(VecStore::load(c)?);
         }
         c.execute("UPDATE sessions SET dirty = 0 WHERE dirty = 1", [])?;
-        Ok(stats)
+        Ok(())
     }
 
     pub fn parse(&self, q: &str) -> Parsed {
@@ -600,6 +633,44 @@ mod tests {
         assert_eq!(results.hits.len(), 1);
         assert_eq!(results.hits[0].session, "session");
         assert_eq!(server.vecs.read().unwrap().data, [2.0]);
+        Ok(())
+    }
+
+    #[test]
+    fn reindex_session_refreshes_catalog_and_lexical_index() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let project = dir.path().join("claude/projects/repo");
+        std::fs::create_dir_all(&project)?;
+        let line = |text: &str| {
+            serde_json::json!({
+                "type": "user", "sessionId": "s1", "cwd": "/repo",
+                "timestamp": "2026-01-01T00:00:00Z", "message": {"role": "user", "content": text},
+            })
+            .to_string()
+        };
+        let path = project.join("s1.jsonl");
+        std::fs::write(&path, format!("{}\n", line("initial turn")))?;
+
+        let mut cfg = Config::default();
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.search.vectors = false;
+        cfg.search.rerank = false;
+        cfg.llm.enabled = false;
+        let engine = Engine::open_in(cfg, &dir.path().join("data"))?;
+        engine.refresh_with(false, false)?;
+        assert_eq!(engine.catalog().sessions["s1"].turn_count, 1);
+        assert!(engine.quick(&engine.parse("quasar"))?.hits.is_empty());
+
+        std::fs::write(
+            &path,
+            format!("{}\n{}\n", line("initial turn"), line("quasar follow-up")),
+        )?;
+        engine.reindex_session("s1")?;
+        assert_eq!(engine.catalog().sessions["s1"].turn_count, 2);
+        let hits = engine.quick(&engine.parse("quasar"))?.hits;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session, "s1");
         Ok(())
     }
 }

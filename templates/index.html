@@ -22,11 +22,14 @@
       <div class="search-box">
         <span class="search-icon" aria-hidden="true"></span>
         <input id="q" name="q" type="search" value="{{ q }}" placeholder="What were you working on?" autocomplete="off" spellcheck="false"{% if q.is_empty() %} autofocus{% endif %}
-          hx-get="/search" hx-trigger="input changed delay:150ms, search" hx-target="#results" hx-include="#search-filters" hx-sync="this:replace">
+          hx-get="/search" hx-trigger="input changed delay:150ms, search, tasks-updated from:body" hx-target="#results" hx-include="#search-filters" hx-sync="this:replace">
         <kbd class="slash-hint" aria-hidden="true">/</kbd>
       </div>
     </form>
-    <p class="hint">Describe it the way you remember it, or paste a ticket, PR, branch or file name. Searching {{ sessions }} sessions from Claude Code and Codex.</p>
+    <div class="mast-foot">
+      <p class="hint">Describe it the way you remember it, or paste a ticket, PR, branch or file name. Searching <span id="session-count">{{ sessions }}</span> sessions from Claude Code and Codex.</p>
+      {% include "all_tasks.html" %}
+    </div>
   </div>
 </header>
 <main id="results">{{ results_html|safe }}</main>

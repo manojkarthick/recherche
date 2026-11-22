@@ -240,6 +240,133 @@ impl<'a> Ingester<'a> {
         Ok(stats)
     }
 
+    /// Re-syncs (when the original file still exists) and reparses one session.
+    pub fn reindex_session(&self, c: &mut Connection, session_id: &str) -> Result<()> {
+        let session: Option<(String, String)> = c
+            .query_row(
+                "SELECT source, archive_path FROM sessions WHERE id = ?",
+                [session_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((session_source, session_archive)) = session else {
+            anyhow::bail!("No session with that ID.");
+        };
+
+        let files: Vec<(String, String, String, i64, i64, String)> = {
+            let mut st = c.prepare(
+                "SELECT src_path, source, archive_path, size, inode, prefix_hash FROM files WHERE session_id = ?",
+            )?;
+            st.query_map([session_id], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            })?
+            .collect::<Result<_, _>>()?
+        };
+
+        let mut todo: Vec<(&'static str, Option<String>, PathBuf)> = vec![];
+        for (src_path, source, archive_path, old_size, old_inode, old_prefix) in files {
+            let source_static = if source == "claude" {
+                "claude"
+            } else {
+                "codex"
+            };
+            let dst = PathBuf::from(&archive_path);
+            let live_src = {
+                let p = PathBuf::from(&src_path);
+                if p.exists() {
+                    Some(p)
+                } else if !is_compressed(&p) {
+                    let zst = PathBuf::from(format!("{src_path}.zst"));
+                    zst.exists().then_some(zst)
+                } else {
+                    None
+                }
+            };
+            if let Some(src) = live_src {
+                let meta = std::fs::metadata(&src)?;
+                let size = meta.len() as i64;
+                let mtime = meta.mtime() * 1000 + meta.mtime_nsec() / 1_000_000;
+                let inode = meta.ino() as i64;
+                let prefix = prefix_hash(&src)?;
+                let prev = (old_inode == inode).then_some((old_size, old_prefix));
+                if old_size != size || prev.as_ref().is_none_or(|p| p.1 != prefix) || !dst.exists()
+                {
+                    sync_archive(&src, &dst, prev.as_ref(), size, &prefix)?;
+                }
+                let src_key = src.to_string_lossy().into_owned();
+                c.execute(
+                    "INSERT INTO files (src_path, source, archive_path, size, mtime, inode, prefix_hash, session_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(src_path) DO UPDATE SET archive_path = excluded.archive_path, size = excluded.size,
+                       mtime = excluded.mtime, inode = excluded.inode, prefix_hash = excluded.prefix_hash,
+                       session_id = excluded.session_id",
+                    params![
+                        src_key,
+                        source_static,
+                        dst.to_string_lossy(),
+                        size,
+                        mtime,
+                        inode,
+                        prefix,
+                        session_id
+                    ],
+                )?;
+                todo.push((source_static, Some(src_key), dst));
+            } else if dst.exists() {
+                todo.push((source_static, Some(src_path), dst));
+            }
+        }
+
+        if todo.is_empty() {
+            if session_archive.is_empty() {
+                // Synthetic/test sessions with no backing file still refresh their index card.
+                c.execute("UPDATE sessions SET dirty = 1 WHERE id = ?", [session_id])?;
+                return Ok(());
+            }
+            let dst = PathBuf::from(&session_archive);
+            if !dst.exists() {
+                anyhow::bail!("Session archive file is no longer on disk.");
+            }
+            let source_static = if session_source == "claude" {
+                "claude"
+            } else {
+                "codex"
+            };
+            todo.push((source_static, None, dst));
+        }
+
+        for (source, src_opt, dst) in todo {
+            let mut bytes = std::fs::read(&dst)?;
+            let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+            bytes.truncate(end);
+            let mut ps = crate::parse::parse(source, &dst, &bytes);
+            if self.excluded(&ps) {
+                ps.skip = true;
+            }
+            if ps.id.is_empty() {
+                continue;
+            }
+            let facts = extract::extract(&ps, self.cfg, &self.tickets);
+            if self.store(c, &ps, &facts, &dst, bytes.len() as i64)?
+                && let Some(src) = src_opt
+            {
+                c.execute(
+                    "UPDATE files SET session_id = ? WHERE src_path = ?",
+                    params![ps.id, src],
+                )?;
+            }
+        }
+        self.link_repos(c)?;
+        Ok(())
+    }
+
     /// True when every origin is on the source's exclude list. A session
     /// with no recorded origin, or one also continued interactively, is kept.
     fn excluded(&self, ps: &ParsedSession) -> bool {
@@ -660,6 +787,77 @@ mod tests {
         std::fs::write(day.join("rollout-warm.jsonl"), &warm2)?;
         ing.run(&mut c, false)?;
         assert_eq!(turns(&c)?, [("cold".into(), 1), ("warm".into(), 2)]);
+        Ok(())
+    }
+
+    #[test]
+    fn reindex_session_updates_one_session_preserves_summary_and_uses_archive() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let project = dir.path().join("claude/projects/repo");
+        std::fs::create_dir_all(&project)?;
+        let s1_path = project.join("s1.jsonl");
+        let s2_path = project.join("s2.jsonl");
+        std::fs::write(
+            &s1_path,
+            format!("{}\n", claude_line("s1", Some("cli"), "first")),
+        )?;
+        std::fs::write(
+            &s2_path,
+            format!("{}\n", claude_line("s2", Some("cli"), "other")),
+        )?;
+
+        let mut cfg = Config::default();
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
+        let ing = Ingester::new(&cfg, dir.path().join("archive"));
+        ing.run(&mut c, false)?;
+        c.execute(
+            "UPDATE sessions SET summary = '- Kept summary', dirty = 0 WHERE id IN ('s1', 's2')",
+            [],
+        )?;
+
+        // Grow both files, then reindex only s1.
+        std::fs::write(
+            &s1_path,
+            format!(
+                "{}\n{}\n",
+                claude_line("s1", Some("cli"), "first"),
+                claude_line("s1", Some("cli"), "second")
+            ),
+        )?;
+        std::fs::write(
+            &s2_path,
+            format!(
+                "{}\n{}\n",
+                claude_line("s2", Some("cli"), "other"),
+                claude_line("s2", Some("cli"), "ignored")
+            ),
+        )?;
+        ing.reindex_session(&mut c, "s1")?;
+
+        let s1: (i64, Option<String>, i64) = c.query_row(
+            "SELECT turn_count, summary, dirty FROM sessions WHERE id = 's1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(s1, (2, Some("- Kept summary".into()), 1));
+        let s2_turns: i64 =
+            c.query_row("SELECT turn_count FROM sessions WHERE id = 's2'", [], |r| {
+                r.get(0)
+            })?;
+        assert_eq!(s2_turns, 1);
+
+        // Original deleted: falls back to the archive copy.
+        std::fs::remove_file(&s1_path)?;
+        ing.reindex_session(&mut c, "s1")?;
+        let s1_turns: i64 =
+            c.query_row("SELECT turn_count FROM sessions WHERE id = 's1'", [], |r| {
+                r.get(0)
+            })?;
+        assert_eq!(s1_turns, 2);
+
+        assert!(ing.reindex_session(&mut c, "nonexistent").is_err());
         Ok(())
     }
 }

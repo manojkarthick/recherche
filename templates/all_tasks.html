@@ -1,0 +1,20 @@
+<div class="all-tasks" id="all-tasks"{% if all_poll %} hx-get="/tasks/all?since={{ all_since }}" hx-trigger="every 750ms" hx-swap="outerHTML"{% endif %}>
+  <div class="all-task-btns">
+    <form class="task-form" hx-post="/tasks/reindex" hx-target="#all-tasks" hx-swap="outerHTML">
+      <button type="submit" class="btn task-btn reindex-btn{% if reindex_all_busy %} busy{% endif %}"{% if reindex_all_busy %} disabled{% endif %} title="Reparse every archived session and rebuild the keyword index">{{ reindex_all_label }}</button>
+    </form>
+    {% if summaries_enabled %}
+    <form class="task-form" hx-post="/tasks/summarize" hx-target="#all-tasks" hx-swap="outerHTML">
+      <button type="submit" class="btn task-btn sum-btn{% if summarize_all_busy %} busy{% endif %}"{% if summarize_all_busy %} disabled{% endif %} title="Summarize all eligible idle sessions that do not have an up-to-date summary">{{ summarize_all_label }}</button>
+    </form>
+    {% if summarize_all_busy %}
+    <form class="task-form" hx-post="/tasks/summarize/cancel" hx-target="#all-tasks" hx-swap="outerHTML">
+      <button type="submit" class="btn task-btn cancel-btn" title="Stop after the current session">Cancel</button>
+    </form>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% if let Some(msg) = all_done %}<span class="task-ok" role="status">{{ msg }}</span>{% endif %}
+  {% if let Some(err) = all_err %}<span class="task-err-inline" role="alert" title="{{ err }}">{{ err }}</span>{% endif %}
+</div>
+{% if let Some(n) = oob_sessions %}<span id="session-count" hx-swap-oob="true">{{ n }}</span>{% endif %}
