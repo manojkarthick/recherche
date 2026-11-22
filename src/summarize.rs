@@ -119,8 +119,8 @@ pub fn pending(cfg: &Config, since: i64, s: &store::SessionMeta, now: i64) -> Op
     })
 }
 
-/// What the summary is written from: prompts, commits, PRs, files, errors
-/// and the final reply. Most of a session's signal is in these.
+/// What the summary is written from: prompts, commits, PRs, files, errors,
+/// selected test results and the final reply.
 pub fn digest(c: &Connection, id: &str) -> Result<String> {
     let (title, repo, cwd, source): (Option<String>, Option<String>, Option<String>, String) = c
         .query_row(
@@ -149,9 +149,9 @@ pub fn digest(c: &Connection, id: &str) -> Result<String> {
     if !files.is_empty() {
         out.push_str(&format!("Files: {}\n", files.join(", ")));
     }
-    let rows: Vec<(String, String, String)> = c
-        .prepare("SELECT COALESCE(clean_user, user_text), assistant_text, errors FROM turns WHERE session_id = ? AND dup = 0 ORDER BY idx")?
-        .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    let rows: Vec<(String, String, String, String)> = c
+        .prepare("SELECT COALESCE(clean_user, user_text), assistant_text, errors, tools_json FROM turns WHERE session_id = ? AND dup = 0 ORDER BY idx")?
+        .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<Result<_, _>>()?;
     let errors: Vec<&str> = rows
         .iter()
@@ -168,6 +168,36 @@ pub fn digest(c: &Connection, id: &str) -> Result<String> {
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
+    }
+    let mut test_results = Vec::new();
+    for row in &rows {
+        let tools: Vec<serde_json::Value> = serde_json::from_str(&row.3)?;
+        for tool in tools {
+            if !matches!(
+                tool["name"].as_str(),
+                Some("Bash" | "exec" | "shell" | "exec_command")
+            ) {
+                continue;
+            }
+            for line in tool["output"].as_str().unwrap_or("").lines() {
+                let line = line.trim();
+                let lower = line.to_ascii_lowercase();
+                if lower.starts_with("pass ")
+                    || lower.starts_with("fail ")
+                    || lower.starts_with("test result:")
+                    || lower.contains(" passed")
+                    || lower.contains(" failed")
+                {
+                    test_results.push(clip_chars(line, 200));
+                }
+            }
+        }
+    }
+    if !test_results.is_empty() {
+        // Recent successful reruns must not be hidden behind earlier failures.
+        out.push_str("Test results in order (later results may resolve earlier failures):\n");
+        out.push_str(&test_results[test_results.len().saturating_sub(10)..].join("\n"));
+        out.push('\n');
     }
     let last = rows
         .iter()
@@ -425,12 +455,10 @@ pub async fn run_until(
                 n += 1;
             }
             Err(e) => {
-                tracing::warn!(
-                    "[{}/{total}] summary for {} failed, stopping: {e:#}",
-                    i + 1,
+                return Err(e.context(format!(
+                    "summary for {} failed after {n}/{total} sessions",
                     cand.id
-                );
-                break;
+                )));
             }
         }
     }
@@ -440,6 +468,50 @@ pub async fn run_until(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn summary_request_preserves_failed_and_later_passing_tests() -> Result<()> {
+        use axum::{Json, Router, routing::post};
+        use std::sync::{Arc, Mutex};
+
+        let captured = Arc::new(Mutex::new(String::new()));
+        let captured_request = captured.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let app = Router::new().route(
+            "/chat/completions",
+            post(move |Json(body): Json<serde_json::Value>| async move {
+                *captured_request.lock().unwrap() = body["messages"][1]["content"]
+                    .as_str().unwrap().to_string();
+                Json(serde_json::json!({"choices": [{"message": {"content": "{\"title\":\"Fixed\",\"summary\":\"- Fixed.\"}"}}]}))
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let dir = tempfile::tempdir()?;
+        let db = dir.path().join("recherche.db");
+        let c = store::open(&db)?;
+        c.execute("INSERT INTO sessions (id, source, host, title, started, ended, turn_count, archive_path) VALUES ('s1', 'codex', '', 'Sync', 1, 2, 1, '')", [])?;
+        let tools = serde_json::json!([
+            {"name":"exec", "output":"FAIL sync.test.ts\nexpected 409, got 200", "error":true},
+            {"name":"exec", "output":"PASS sync.test.ts (14 tests)", "error":false}
+        ])
+        .to_string();
+        c.execute("INSERT INTO turns (session_id, idx, user_text, assistant_text, tool_text, files, commands, errors, tools_json, ukey, chash) VALUES ('s1', 0, 'fix sync', 'committed', '', '', '', 'FAIL sync.test.ts', ?, 'u', 'c')", [tools])?;
+        let mut cfg = Config::default();
+        cfg.llm.api_key_env = "HOME".into();
+        cfg.llm.base_url = format!("http://{addr}");
+        let llm = Llm::new(cfg.llm.clone(), db.clone());
+        summarize_session(&llm, &cfg, &db, "s1").await?;
+        let digest = captured.lock().unwrap();
+        let results = digest.split("Test results in order").nth(1).unwrap();
+        assert!(
+            results.find("FAIL sync.test.ts").unwrap()
+                < results.find("PASS sync.test.ts (14 tests)").unwrap(),
+            "{digest}"
+        );
+        server.abort();
+        Ok(())
+    }
 
     #[test]
     fn pending_explains_why_a_session_has_no_summary() {

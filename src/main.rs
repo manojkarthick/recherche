@@ -331,7 +331,7 @@ fn main() -> Result<()> {
                     config::env_file().display()
                 );
             }
-            let done = rt.block_on(summarize::run(
+            let result = rt.block_on(summarize::run(
                 &engine.llm,
                 &engine.cfg,
                 &engine.db,
@@ -339,8 +339,10 @@ fn main() -> Result<()> {
                 force,
                 limit,
                 true,
-            ))?;
+            ));
+            // Publish summaries saved before a later API failure, too.
             engine.refresh(false)?;
+            let done = result?;
             println!("Summarized {done} sessions.");
         }
         Cmd::Eval {

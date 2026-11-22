@@ -132,7 +132,7 @@ API calls can include sensitive content from your sessions:
 | Feature | Request contents | How to disable it |
 | --- | --- | --- |
 | Query expansion | Original query and up to 80 known repository names | `rewrite = false` |
-| Summaries | Agent, title, repo, working directory, selected entities and file names, prompts, errors, final assistant reply | `summaries = false` |
+| Summaries | Agent, title, repo, working directory, selected entities and file names, prompts, errors, selected test-result lines, final assistant reply | `summaries = false` |
 
 The summary digest is capped and does not submit the complete raw transcript,
 but it is not a redaction mechanism. `deny_data_collection = true` sends
