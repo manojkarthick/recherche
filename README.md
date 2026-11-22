@@ -157,6 +157,7 @@ source exclusions, service setup, and the data retained locally.
 | [Releasing](docs/releases.md) | Binary publishing and Homebrew token setup |
 | [HTTP API](docs/api.md) | Client-independent JSON API for search, sessions, transcripts, and entity navigation |
 | [Example configuration](config.example.toml) | Copyable settings with defaults |
+| [Example environment file](.env.example) | Copyable `.env` template for background services |
 
 ## Development
 

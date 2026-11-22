@@ -14,6 +14,7 @@ recherche uses XDG locations on every supported OS, including macOS:
 | Purpose | Default | Override |
 | --- | --- | --- |
 | Configuration | `~/.config/recherche/config.toml` | `$XDG_CONFIG_HOME/recherche/config.toml`, or `--config <path>` |
+| Service environment | `~/.config/recherche/.env` | `$XDG_CONFIG_HOME/recherche/.env` (`chmod 600`) |
 | Evaluation queries | `~/.config/recherche/eval.toml` | `$XDG_CONFIG_HOME/recherche/eval.toml`, or `eval --file <path>` |
 | Archive, database, keyword index | `~/.local/share/recherche/` | `$XDG_DATA_HOME/recherche/`, or `RECHERCHE_DATA_DIR` for the complete data path |
 | Downloaded models | `~/.cache/recherche/models/` | `$XDG_CACHE_HOME/recherche/models/` |
@@ -101,8 +102,9 @@ enabled = false
 ## Optional LLM features
 
 The default configuration enables API features when `OPENROUTER_API_KEY` is
-present and nonempty. Without it, local search remains available. The defaults
-are:
+present and nonempty (from your shell environment or
+`~/.config/recherche/.env`). Without it, local search remains available. The
+defaults are:
 
 ```toml
 [llm]
@@ -154,11 +156,42 @@ recherche does not track or cap API spend. Set credit or spending limits with
 your provider. See [the usage guide](usage.md#optional-summaries-and-query-expansion)
 before backfilling summaries.
 
+### Credentials for background services (`brew services` and `systemd`)
+
+Services started by `brew services` or `install-service` do not inherit your
+shell environment, and `brew upgrade` / `brew services restart` regenerates
+Homebrew's LaunchAgent plist. To pass `OPENROUTER_API_KEY` (or service
+overrides like `RECHERCHE_LOG`) without editing service plists or putting
+secrets in `config.toml`, place a `0600`-permissioned `.env` file in the config
+directory:
+
+```sh
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/recherche"
+cp .env.example "${XDG_CONFIG_HOME:-$HOME/.config}/recherche/.env"
+chmod 600 "${XDG_CONFIG_HOME:-$HOME/.config}/recherche/.env"
+```
+
+Then uncomment and set `OPENROUTER_API_KEY` in that file, restart the service
+(`brew services restart recherche`), and verify with `recherche doctor`:
+
+```dotenv
+OPENROUTER_API_KEY=sk-or-...
+```
+
+At startup (except for `recherche demo`), recherche loads
+`${XDG_CONFIG_HOME:-$HOME/.config}/recherche/.env` via `dotenvy`:
+
+- Variables already set in your shell environment (for example via `direnv` or
+  `op run`) take precedence and are never overwritten.
+- On Unix, recherche skips the file and logs a warning if it is readable by
+  group or others (`chmod 600` required).
+- Restart `serve` after editing `.env` or rotating the key.
+
 ### Credentials with 1Password and direnv
 
 The config stores the API key's environment variable name, not the secret.
-recherche reads that variable from its process environment and does not read
-`.envrc` itself.
+recherche reads that variable from its process environment (including
+`~/.config/recherche/.env` when present) and does not read `.envrc` itself.
 
 If you use 1Password CLI and direnv, create a **1Password Environment** containing
 `OPENROUTER_API_KEY` (or the name in `api_key_env`). Keep its real ID and secret
@@ -218,15 +251,11 @@ Linux output is available through the user service's journal.
 
 Services do not inherit your shell environment, whether started by
 `brew services` or from `install-service`.
-Custom XDG paths, source-root overrides, and API credentials must be configured
-for the service separately. The generated service also does not preserve a
-`--config` argument from the installation command.
-
-A service command can use `direnv exec /absolute/path/to/checkout` before the
-binary to load an allowed `.envrc`, but that still needs access to `op` and an
-authorized 1Password session at startup. Interactive biometric approval may
-be unavailable during unattended startup. The generated service does not
-provision unattended API credentials; local search can run without them.
+Put `OPENROUTER_API_KEY` (and any other environment overrides) in
+`~/.config/recherche/.env` with `chmod 600`; see
+[Credentials for background services](#credentials-for-background-services-brew-services-and-systemd).
+`install-service` does not preserve a `--config` argument from the installation
+command.
 
 ## Listening address
 
@@ -286,7 +315,7 @@ RECHERCHE_LOG=recherche=debug recherche serve
 | Malformed-line counts are nonzero | `doctor` reports complete lines that are invalid JSON; an unfinished trailing line waits for the writer to finish |
 | A deleted worktree's resume command fails | The transcript can survive in recherche, while the working directory and agent's own resume data may be gone |
 | No generated kind or outcome | Those fields need optional summaries; use `summarize --dry-run` to inspect eligible sessions |
-| LLM features work in a terminal but not as a service | Check the service's environment and 1Password availability at startup |
+| LLM features work in a terminal but not as a service | Put `OPENROUTER_API_KEY` in `~/.config/recherche/.env` (`chmod 600`), restart the service, and check `recherche doctor` |
 | `open` launches a page that cannot connect | `open` only opens a URL; start `serve` separately |
 
 Source formats can evolve. Malformed-line counts detect invalid JSON, not every
