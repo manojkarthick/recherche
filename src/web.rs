@@ -965,10 +965,14 @@ fn render_results(
     let status = match res.stage {
         "entity" => "Newest first".into(),
         _ if p.is_empty() => format!("{} most recent sessions", results.len()),
-        "keyword" => format!(
+        "keyword" if pq.text.trim().is_empty() && pq.phrases.is_empty() => {
+            format!("{} sessions", res.total)
+        }
+        "keyword" if stream => format!(
             "{} sessions with matching words. Ranking by meaning…",
             res.total
         ),
+        "keyword" => format!("{} sessions with matching words", res.total),
         "refined" => {
             let terms = res
                 .rewrite
@@ -1008,7 +1012,7 @@ fn render_results(
         },
         hidden,
         active,
-        empty_hint: results.is_empty().then(|| {
+        empty_hint: (results.is_empty() && !stream).then(|| {
             if p.filters().is_empty() {
                 "No session matches. Try fewer or different words, or describe what the session was about.".into()
             } else {
@@ -1059,15 +1063,9 @@ fn first_stage(e: &Engine, p: &Params) -> Result<String> {
     let pq = e.parse(&p.full_query());
     let res = e.quick(&pq)?;
     let opts = e.default_options();
-    let more = opts.vectors || opts.rerank || e.llm.rewrite_enabled();
-    render_results(
-        e,
-        p,
-        &res,
-        more && !res.hits.is_empty(),
-        more && !res.hits.is_empty(),
-        None,
-    )
+    let more = (!pq.text.trim().is_empty() || !pq.phrases.is_empty())
+        && (opts.vectors || opts.rerank || e.llm.rewrite_enabled());
+    render_results(e, p, &res, more, more, None)
 }
 
 async fn index(
@@ -1958,6 +1956,60 @@ impl<E: Into<anyhow::Error>> From<E> for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn search_streams_even_without_keyword_matches() {
+        use axum::body::{Body, to_bytes};
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::Config::default();
+        cfg.llm.enabled = false;
+        let engine = Arc::new(Engine::open_in(cfg.clone(), &dir.path().join("vectors")).unwrap());
+        let response = router(engine)
+            .oneshot(
+                Request::get("/?q=unmatched+query")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            body.contains("sse-connect=\"/stream?q=unmatched+query\""),
+            "{body}"
+        );
+        assert!(!body.contains("No session matches"), "{body}");
+
+        cfg.search.vectors = false;
+        cfg.search.rerank = false;
+        let engine = Arc::new(Engine::open_in(cfg, &dir.path().join("keyword")).unwrap());
+        let response = router(engine)
+            .oneshot(
+                Request::get("/?q=unmatched+query")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("No session matches"), "{body}");
+        assert!(!body.contains("Ranking by meaning"), "{body}");
+        assert!(!body.contains("sse-connect"), "{body}");
+    }
 
     #[test]
     fn transcript_markdown_formats_text_and_preserves_search() {
