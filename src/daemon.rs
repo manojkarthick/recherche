@@ -36,6 +36,7 @@ pub fn run(e: Arc<Engine>) {
         for dir in [
             e.cfg.claude_dir().join("projects"),
             e.cfg.codex_dir().join("sessions"),
+            e.cfg.antigravity_dir().join("brain"),
         ] {
             if dir.exists()
                 && let Err(err) = w.watch(&dir, RecursiveMode::Recursive)

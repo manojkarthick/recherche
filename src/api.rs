@@ -367,6 +367,7 @@ second line', errors = 'Stored error',
         let mut cfg = crate::config::Config::default();
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
         cfg.search.rerank = false;
         cfg.llm.enabled = false;
         let engine = Engine::open_in(cfg, dir.path()).unwrap();

@@ -1,8 +1,10 @@
-//! `recherche demo`: serves made-up Claude Code and Codex sessions, so UI
-//! changes can be tried and screenshots taken without showing real work.
+//! `recherche demo`: serves made-up Claude Code, Codex and Antigravity
+//! sessions, so UI changes can be tried and screenshots taken without showing
+//! real work.
 //!
 //! Each file in `demo/sessions/` is one session. The command writes them as
-//! the agents would, into `<dir>/claude` and `<dir>/codex`, indexes them into
+//! the agents would, into `<dir>/claude`, `<dir>/codex` and
+//! `<dir>/antigravity`, indexes them into
 //! `<dir>/data`, stores their summaries and serves the result. Dates are
 //! relative to now, so the demo looks the same whenever it runs. See
 //! `demo/README.md` for the fixture format.
@@ -35,8 +37,8 @@ struct Fixture {
     /// When the session started, such as `3d`, `5h` or `2d4h30m`.
     ago: String,
     model: Option<String>,
-    /// Claude: the title Claude Code generated. Without it, the first prompt
-    /// becomes the title.
+    /// Claude and Antigravity: the title the agent generated. Without it, the
+    /// first prompt becomes the title.
     title: Option<String>,
     /// Claude: a PR the session opened, as `owner/repo#123`.
     pr: Option<String>,
@@ -53,6 +55,7 @@ struct Fixture {
 enum Agent {
     Claude,
     Codex,
+    Antigravity,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,7 +67,8 @@ struct Turn {
     tools: Vec<Tool>,
 }
 
-/// A shell `command`, or for Claude any tool by `name` and `input`.
+/// A shell `command`, or for Claude and Antigravity any tool by `name` and
+/// `input`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Tool {
@@ -112,6 +116,7 @@ pub fn prepare(mut cfg: Config, dir: &Path) -> Result<Engine> {
     std::fs::write(dir.join(MARKER), "")?;
     cfg.sources.claude.dir = Some(dir.join("claude"));
     cfg.sources.codex.dir = Some(dir.join("codex"));
+    cfg.sources.antigravity.dir = Some(dir.join("antigravity"));
     // The UI explains missing summaries only when summaries are on, which
     // needs a key. Any set variable will do: the API is a closed local port,
     // so made-up sessions are never sent anywhere.
@@ -160,6 +165,7 @@ fn write(dir: &Path, name: &str, f: &Fixture, now: DateTime<Utc>) -> Result<Stri
     let (path, lines, id) = match f.agent {
         Agent::Claude => claude(dir, name, f, &cwd, start)?,
         Agent::Codex => codex(dir, name, f, &cwd, start, now)?,
+        Agent::Antigravity => antigravity(dir, name, f, &cwd, start)?,
     };
     std::fs::create_dir_all(path.parent().unwrap())?;
     let mut text = String::new();
@@ -282,7 +288,7 @@ fn codex(
     now: DateTime<Utc>,
 ) -> Result<Session> {
     if f.title.is_some() || f.pr.is_some() || f.parent.is_some() {
-        bail!("`title`, `pr` and `parent` are Claude-only");
+        bail!("`title`, `pr` and `parent` are not used for Codex");
     }
     let sid = uuid(name);
     let mut git = json!({ "commit_hash": hex(&format!("commit {name}"), 20) });
@@ -340,6 +346,95 @@ fn codex(
             start.format("%Y-%m-%dT%H-%M-%S")
         ));
     Ok((path, lines, sid))
+}
+
+fn antigravity(
+    dir: &Path,
+    name: &str,
+    f: &Fixture,
+    cwd: &str,
+    start: DateTime<Utc>,
+) -> Result<Session> {
+    if f.pr.is_some() || f.parent.is_some() || f.repo.is_some() {
+        bail!("`pr`, `parent` and `repo` are not used for Antigravity");
+    }
+    let id = uuid(name);
+    let model = f.model.as_deref().unwrap_or("gemini-3-pro-high");
+    let mut lines: Vec<Value> = vec![];
+    let mut step = |t: DateTime<Utc>, ty: &str, mut extra: Value| {
+        extra["step_index"] = json!(lines.len());
+        extra["type"] = json!(ty);
+        extra["created_at"] = json!(t.to_rfc3339_opts(SecondsFormat::Secs, true));
+        if extra.get("status").is_none() {
+            extra["status"] = json!("DONE");
+        }
+        lines.push(extra);
+    };
+    let mut t = start;
+    for turn in &f.turns {
+        let content = format!(
+            "<USER_REQUEST>\n{}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: {}.\n</ADDITIONAL_METADATA>",
+            turn.prompt,
+            ts(t)
+        );
+        step(
+            t,
+            "USER_INPUT",
+            json!({"source": "USER_EXPLICIT", "content": content}),
+        );
+        t += Duration::minutes(1);
+        for tool in &turn.tools {
+            let (name, args) = match (&tool.command, &tool.name) {
+                (Some(cmd), None) => ("run_command", json!({ "CommandLine": cmd })),
+                (None, Some(name)) => (name.as_str(), tool.input.clone().unwrap_or(json!({}))),
+                _ => bail!("a tool needs either `command` or `name`"),
+            };
+            step(
+                t,
+                "PLANNER_RESPONSE",
+                json!({"source": "MODEL", "model": model, "tool_calls": [{"name": name, "args": args}]}),
+            );
+            let timing = format!("Created At: {}\nCompleted At: {}\n", ts(t), ts(t));
+            let result = if tool.command.is_some() {
+                json!({"content": format!(
+                    "{timing}Command exited with code {}.\n\nCommand output:\n{}",
+                    i32::from(tool.error),
+                    tool.output
+                )})
+            } else if tool.error {
+                json!({"status": "ERROR", "error": tool.output, "content": format!("{timing}Encountered error in step execution: {}", tool.output)})
+            } else {
+                json!({"content": format!("{timing}{}", tool.output)})
+            };
+            step(t, "GENERIC", result);
+            t += Duration::seconds(30);
+        }
+        step(
+            t,
+            "PLANNER_RESPONSE",
+            json!({"source": "MODEL", "model": model, "content": turn.reply}),
+        );
+        t += Duration::minutes(4);
+    }
+    // The title and workspace are only in Antigravity's summaries database.
+    let root = dir.join("antigravity");
+    std::fs::create_dir_all(&root)?;
+    let c = rusqlite::Connection::open(root.join("conversation_summaries.db"))?;
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+           workspace_uris TEXT NOT NULL, parent_conversation_id TEXT NOT NULL DEFAULT '')",
+        [],
+    )?;
+    let uri = format!("file://{}", cwd.replace('%', "%25").replace(' ', "%20"));
+    c.execute(
+        "INSERT INTO conversation_summaries (conversation_id, title, workspace_uris) VALUES (?, ?, ?)",
+        rusqlite::params![id, f.title.as_deref().unwrap_or(""), json!([uri]).to_string()],
+    )?;
+    let path = root
+        .join("brain")
+        .join(&id)
+        .join(".system_generated/logs/transcript_full.jsonl");
+    Ok((path, lines, id))
 }
 
 fn ts(t: DateTime<Utc>) -> String {
@@ -440,6 +535,23 @@ mod tests {
         )?;
         assert!(compressed > 0, "no compressed Codex sessions");
         let cat = engine.catalog();
+        for (name, f) in &fixtures {
+            if f.agent == Agent::Antigravity {
+                let s = &cat.sessions[&uuid(name)];
+                assert_eq!(s.source, "antigravity", "{name}");
+                assert!(
+                    s.cwd.is_some(),
+                    "{name}: no cwd from the summaries database"
+                );
+                // The catalog shows the summary's title, so check the stored one.
+                let title: String = engine.conn()?.query_row(
+                    "SELECT title FROM sessions WHERE id = ?1",
+                    [uuid(name)],
+                    |r| r.get(0),
+                )?;
+                assert_eq!(Some(&title), f.title.as_ref(), "{name}");
+            }
+        }
         assert_eq!(cat.sessions.len(), fixtures.len());
         let summarized = fixtures.iter().filter(|f| f.1.summary.is_some()).count();
         assert_eq!(

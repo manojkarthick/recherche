@@ -2,8 +2,8 @@
    Noir: black, white and untinted greys. The yellow highlighter is the only
    hue for content, and it only ever marks what matched the query. Where you
    are and what you picked is shown by inverting to an ink block. Other colour
-   comes in small doses with a meaning: the Claude logo, green when something
-   worked, red when it failed. Monospace is reserved for literal things you could paste into a
+   comes in small doses with a meaning: the Claude and Antigravity logos,
+   green when something worked, red when it failed. Monospace is reserved for literal things you could paste into a
    terminal: repos, branches, commands, paths and tool calls. */
 
 :root {
@@ -19,6 +19,7 @@
   --mark-edge: #f2c800;
   --on-mark: #000000;
   --claude: #d97757;
+  --antigravity: #4285f4;
   --ok: #1a7f37;
   --ok-soft: #e6f4ea;
   --warn: #c0221a;
@@ -69,6 +70,7 @@ mark { background: var(--mark); color: var(--on-mark); border-radius: 2px; paddi
 }
 .logo.claude { --icon: url("/assets/claude.svg"); background: var(--claude); }
 .logo.codex { --icon: url("/assets/codex.svg"); }
+.logo.antigravity { --icon: url("/assets/antigravity.svg"); background: var(--antigravity); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 /* ---- wordmark: the name is itself a highlighted hit ---- */

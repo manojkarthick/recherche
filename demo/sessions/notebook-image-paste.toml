@@ -1,0 +1,65 @@
+# An Antigravity session. Its title and directory come from the summaries
+# database, as for real Antigravity conversations. Covers a failing command,
+# a file read and edit, and a tool call a hook refused.
+agent = "antigravity"
+cwd = "code/notebook"
+ago = "4d6h"
+title = "Fix pasted images losing their file names"
+
+[[turns]]
+prompt = "pasting a screenshot into a note saves it as image.png every time, so the second paste overwrites the first"
+reply = "The paste handler uses the clipboard item's name, and macOS always calls screenshots `image.png`. I'll name pasted files after their content hash instead."
+
+[[turns.tools]]
+command = "rg -n \"clipboardData\" src"
+output = "src/editor/paste.ts:18:  const file = event.clipboardData?.files[0];"
+
+[[turns.tools]]
+name = "read_file"
+input = { Path = "{root}/code/notebook/src/editor/paste.ts" }
+output = '''
+Showing lines 14-24 of 61
+14: export async function onPaste(event: ClipboardEvent) {
+15:   const file = event.clipboardData?.files[0];
+16:   if (!file) return;
+17:   const path = `attachments/${file.name}`;
+18:   await vault.write(path, await file.arrayBuffer());'''
+
+[[turns.tools]]
+command = "pnpm test paste"
+error = true
+output = '''
+ FAIL  src/editor/paste.test.ts > two pastes keep both images
+AssertionError: expected [ 'attachments/image.png' ] to have a length of 2'''
+
+[[turns]]
+prompt = "go ahead, and clean out the old attachments folder while you're at it"
+reply = '''
+Pasted images are now saved as `attachments/<sha256 prefix>.<ext>`, so two pastes never collide and pasting the same image twice reuses one file.
+
+I didn't clear the attachments folder: a hook blocked `rm -rf`, and notes still link to those files.'''
+
+[[turns.tools]]
+name = "edit_file"
+input = { Path = "{root}/code/notebook/src/editor/paste.ts", Target = "const path = `attachments/${file.name}`;", Replacement = "const path = `attachments/${await contentName(file)}`;" }
+output = "The file has been updated."
+
+[[turns.tools]]
+command = "pnpm test paste"
+output = " ✓ src/editor/paste.test.ts (4 tests) 38ms"
+
+[[turns.tools]]
+name = "run_command"
+input = { CommandLine = "rm -rf attachments/old" }
+error = true
+output = "tool call denied by pre-tool hook: BLOCKED: rm: use trash instead"
+
+[summary]
+title = "Name pasted images by content hash"
+summary = '''
+- macOS names every pasted screenshot `image.png`, so each paste overwrote the last.
+- Pasted files are now named after a SHA-256 prefix of their content; a regression test covers two pastes.
+- Clearing old attachments was blocked by a hook and left alone.'''
+kind = "bugfix"
+outcome = "fixed"
+tags = ["paste", "attachments"]

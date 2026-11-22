@@ -721,11 +721,7 @@ fn result_view(
         } else {
             format!(
                 "<span class=\"who logo {}\" role=\"img\" aria-label=\"{}\" title=\"{}\"></span> {}",
-                if s.source == "claude" {
-                    "claude"
-                } else {
-                    "codex"
-                },
+                crate::parse::source(&s.source),
                 agent_name(&s.source),
                 agent_name(&s.source),
                 code_spans(&a)
@@ -812,19 +808,19 @@ fn pending_note(p: Pending, idle_minutes: i64) -> String {
 }
 
 /// The product name, used where agents are filtered rather than quoted.
-fn agent_product(source: &str) -> &'static str {
-    if source == "claude" {
-        "Claude Code"
-    } else {
-        "Codex"
+pub fn agent_product(source: &str) -> &'static str {
+    match source {
+        "claude" => "Claude Code",
+        "antigravity" => "Antigravity",
+        _ => "Codex",
     }
 }
 
 pub fn agent_name(source: &str) -> &'static str {
-    if source == "claude" {
-        "Claude"
-    } else {
-        "Codex"
+    match source {
+        "claude" => "Claude",
+        "antigravity" => "Antigravity",
+        _ => "Codex",
     }
 }
 
@@ -881,7 +877,7 @@ fn facets(cat: &Catalog, p: &Params, hits: &[Hit]) -> Vec<FacetGroup> {
         agent
             .into_iter()
             .map(|(k, n)| FacetItem {
-                logo: if k == "claude" { "claude" } else { "codex" },
+                logo: crate::parse::source(&k),
                 ..item("agent", &k, agent_product(&k).to_string(), n)
             })
             .collect(),
@@ -2305,6 +2301,7 @@ mod tests {
         let mut cfg = crate::config::Config::default();
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
         cfg.search.vectors = false;
         cfg.search.rerank = false;
         cfg.llm.enabled = true;
@@ -2556,6 +2553,7 @@ mod tests {
         let mut cfg = crate::config::Config::default();
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
         cfg.search.vectors = false;
         cfg.search.rerank = false;
         cfg.llm.enabled = true;

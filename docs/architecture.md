@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Usage](usage.md) · [Configuration](configuration.md)
 
-recherche turns the session files written by Claude Code and Codex into a
+recherche turns the session files written by Claude Code, Codex and Antigravity into a
 searchable personal archive. It is one application with two interfaces: a CLI
 and a browser UI. SQLite, the keyword index, and local inference all run inside
 the application; there is no separate database, vector service, or frontend
@@ -18,7 +18,7 @@ another OpenAI-compatible endpoint you configure.
 flowchart TB
     subgraph machine["Your machine"]
         browser["Browser"]
-        sources["Claude Code and Codex<br/>Session files"]
+        sources["Claude Code, Codex and Antigravity<br/>Session files"]
         cli["CLI commands"]
         app["recherche binary<br/>Import, search, local models,<br/>and HTTP server"]
         data[("Local data<br/>Raw archive, SQLite,<br/>and Tantivy index")]
@@ -40,8 +40,12 @@ engine.
 
 ## From session files to searchable data
 
-1. **Discover and archive.** The importer scans Claude Code's `projects/` and
-   Codex's `sessions/` and `archived_sessions/` directories for JSONL files.
+1. **Discover and archive.** The importer scans Claude Code's `projects/`,
+   Codex's `sessions/` and `archived_sessions/`, and Antigravity's `brain/`
+   directories for JSONL files. Antigravity keeps a conversation's title and
+   workspace in a separate database, so the importer copies them into a
+   `.meta.json` file beside the archived transcript; a changed title alone
+   causes a reparse.
    It tracks file size, modification time, inode, and a prefix hash. Growing
    files normally append new bytes to the archive; replaced or truncated files
    are copied in full. Originals are read, not modified.

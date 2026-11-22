@@ -9,6 +9,7 @@
 use crate::config::Config;
 use crate::extract;
 use crate::model::{Fact, ParsedSession};
+use crate::parse::antigravity;
 use crate::util::{count, hash};
 use anyhow::Result;
 use regex::Regex;
@@ -46,7 +47,27 @@ fn discover(cfg: &Config) -> Vec<(&'static str, PathBuf, PathBuf)> {
             }
         });
     }
+    // Archived flat, as `brain/<id>.jsonl`, beside the `<id>.meta.json` that
+    // `antigravity::write_meta` writes.
+    let brain = cfg.antigravity_dir().join("brain");
+    for e in std::fs::read_dir(&brain).into_iter().flatten().flatten() {
+        let p = e
+            .path()
+            .join(".system_generated/logs/transcript_full.jsonl");
+        if p.is_file() {
+            let rel = Path::new("brain").join(format!("{}.jsonl", e.file_name().to_string_lossy()));
+            out.push(("antigravity", p, rel));
+        }
+    }
     out
+}
+
+/// Antigravity metadata by conversation; see `antigravity::read_meta`.
+fn antigravity_meta(cfg: &Config) -> HashMap<String, String> {
+    antigravity::read_meta(&cfg.antigravity_dir()).unwrap_or_else(|err| {
+        tracing::warn!("cannot read Antigravity conversation titles and directories: {err:#}");
+        HashMap::new()
+    })
 }
 
 /// Calls `f` with each session file and the plain `.jsonl` path it is
@@ -156,7 +177,13 @@ impl<'a> Ingester<'a> {
             .collect::<Result<_, _>>()?
         };
         let mut todo: Vec<(&'static str, String, PathBuf)> = vec![];
-        for (source, src, rel) in discover(self.cfg) {
+        let found = discover(self.cfg);
+        let agy_meta = if found.iter().any(|f| f.0 == "antigravity") {
+            antigravity_meta(self.cfg)
+        } else {
+            HashMap::new()
+        };
+        for (source, src, rel) in found {
             stats.files += 1;
             let Ok(meta) = std::fs::metadata(&src) else {
                 continue;
@@ -166,10 +193,14 @@ impl<'a> Ingester<'a> {
             let mtime = meta.mtime() * 1000 + meta.mtime_nsec() / 1_000_000;
             let inode = meta.ino() as i64;
             let old = known.get(&key);
-            if !rebuild && old.is_some_and(|o| o.0 == size && o.1 == mtime && o.2 == inode) {
+            let dst = self.archive.join(source).join(&rel);
+            let meta_changed = source == "antigravity" && antigravity::write_meta(&agy_meta, &dst)?;
+            if !rebuild
+                && !meta_changed
+                && old.is_some_and(|o| o.0 == size && o.1 == mtime && o.2 == inode)
+            {
                 continue;
             }
-            let dst = self.archive.join(source).join(&rel);
             let prefix = prefix_hash(&src)?;
             // A different inode means the file was replaced, so copy it whole.
             let prev = old.filter(|o| o.2 == inode).map(|o| (o.0, o.3.clone()));
@@ -194,12 +225,7 @@ impl<'a> Ingester<'a> {
                 .collect::<Result<_, _>>()?;
             for (source, src, arch) in rows {
                 if !seen.contains(&src) && Path::new(&arch).exists() {
-                    let source = if source == "claude" {
-                        "claude"
-                    } else {
-                        "codex"
-                    };
-                    todo.push((source, src, PathBuf::from(arch)));
+                    todo.push((crate::parse::source(&source), src, PathBuf::from(arch)));
                 }
             }
         }
@@ -270,13 +296,14 @@ impl<'a> Ingester<'a> {
             .collect::<Result<_, _>>()?
         };
 
+        let agy_meta = if session_source == "antigravity" {
+            antigravity_meta(self.cfg)
+        } else {
+            HashMap::new()
+        };
         let mut todo: Vec<(&'static str, Option<String>, PathBuf)> = vec![];
         for (src_path, source, archive_path, old_size, old_inode, old_prefix) in files {
-            let source_static = if source == "claude" {
-                "claude"
-            } else {
-                "codex"
-            };
+            let source_static = crate::parse::source(&source);
             let dst = PathBuf::from(&archive_path);
             let live_src = {
                 let p = PathBuf::from(&src_path);
@@ -299,6 +326,9 @@ impl<'a> Ingester<'a> {
                 if old_size != size || prev.as_ref().is_none_or(|p| p.1 != prefix) || !dst.exists()
                 {
                     sync_archive(&src, &dst, prev.as_ref(), size, &prefix)?;
+                }
+                if source_static == "antigravity" {
+                    antigravity::write_meta(&agy_meta, &dst)?;
                 }
                 let src_key = src.to_string_lossy().into_owned();
                 c.execute(
@@ -334,12 +364,7 @@ impl<'a> Ingester<'a> {
             if !dst.exists() {
                 anyhow::bail!("Session archive file is no longer on disk.");
             }
-            let source_static = if session_source == "claude" {
-                "claude"
-            } else {
-                "codex"
-            };
-            todo.push((source_static, None, dst));
+            todo.push((crate::parse::source(&session_source), None, dst));
         }
 
         for (source, src_opt, dst) in todo {
@@ -372,7 +397,8 @@ impl<'a> Ingester<'a> {
     fn excluded(&self, ps: &ParsedSession) -> bool {
         let deny = match ps.source {
             "claude" => &self.cfg.sources.claude.exclude_entrypoints,
-            _ => &self.cfg.sources.codex.exclude_sources,
+            "codex" => &self.cfg.sources.codex.exclude_sources,
+            _ => return false,
         };
         !ps.origins.is_empty() && ps.origins.iter().all(|o| deny.contains(o))
     }
@@ -479,7 +505,7 @@ impl<'a> Ingester<'a> {
                     tool_text.push('\n');
                     tool_text.push_str(&tc.output);
                     tool_text.push('\n');
-                    if matches!(tc.name.as_str(), "Bash" | "exec" | "shell" | "exec_command") {
+                    if crate::model::COMMAND_TOOLS.contains(&tc.name.as_str()) {
                         commands.push(tc.input.as_str());
                     }
                     files.extend(tc.files.iter().map(String::as_str));
@@ -726,6 +752,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
         let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
         Ingester::new(&cfg, dir.path().join("archive")).run(&mut c, false)?;
 
@@ -763,6 +790,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
         let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
         let archive = dir.path().join("archive");
         let ing = Ingester::new(&cfg, archive.clone());
@@ -791,6 +819,90 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_metadata_is_archived_beside_the_transcript() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().join("antigravity");
+        let logs = root.join("brain/conv-1/.system_generated/logs");
+        std::fs::create_dir_all(&logs)?;
+        let step = |i: usize, ty: &str, content: &str| {
+            serde_json::json!({"step_index": i, "type": ty, "status": "DONE",
+                "created_at": "2026-01-01T00:00:00Z", "content": content})
+            .to_string()
+        };
+        std::fs::write(
+            logs.join("transcript_full.jsonl"),
+            [
+                step(
+                    0,
+                    "USER_INPUT",
+                    "<USER_REQUEST>\nfix the flaky upload test\n</USER_REQUEST>",
+                ),
+                step(1, "PLANNER_RESPONSE", "Fixed."),
+            ]
+            .join("\n")
+                + "\n",
+        )?;
+        let db = rusqlite::Connection::open(root.join("conversation_summaries.db"))?;
+        db.execute_batch(
+            "CREATE TABLE conversation_summaries (conversation_id TEXT, title TEXT, workspace_uris TEXT, parent_conversation_id TEXT);
+             INSERT INTO conversation_summaries VALUES ('conv-1', '', '[\"file:///work/app\"]', '');",
+        )?;
+
+        let mut cfg = Config::default();
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.sources.antigravity.dir = Some(root.clone());
+        let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
+        let ing = Ingester::new(&cfg, dir.path().join("archive"));
+        let session = |c: &Connection| -> Result<(String, String, Option<String>, i64)> {
+            Ok(c.query_row(
+                "SELECT source, title, cwd, turn_count FROM sessions WHERE id = 'conv-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?)
+        };
+        ing.run(&mut c, false)?;
+        assert_eq!(
+            session(&c)?,
+            (
+                "antigravity".into(),
+                "fix the flaky upload test".into(),
+                Some("/work/app".into()),
+                1
+            )
+        );
+
+        // Antigravity names the conversation after its last step was written.
+        db.execute(
+            "UPDATE conversation_summaries SET title = 'Fix flaky upload test'",
+            [],
+        )?;
+        ing.run(&mut c, false)?;
+        assert_eq!(session(&c)?.1, "Fix flaky upload test");
+        db.execute(
+            "UPDATE conversation_summaries SET title = 'Fix upload test'",
+            [],
+        )?;
+        ing.reindex_session(&mut c, "conv-1")?;
+        assert_eq!(session(&c)?.1, "Fix upload test");
+
+        // Once Antigravity drops the conversation, a rebuild reads the archive.
+        std::fs::remove_dir_all(root.join("brain"))?;
+        db.execute("DELETE FROM conversation_summaries", [])?;
+        ing.run(&mut c, true)?;
+        assert_eq!(
+            session(&c)?,
+            (
+                "antigravity".into(),
+                "Fix upload test".into(),
+                Some("/work/app".into()),
+                1
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
     fn reindex_session_updates_one_session_preserves_summary_and_uses_archive() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let project = dir.path().join("claude/projects/repo");
@@ -809,6 +921,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
         let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
         let ing = Ingester::new(&cfg, dir.path().join("archive"));
         ing.run(&mut c, false)?;

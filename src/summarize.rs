@@ -173,10 +173,10 @@ pub fn digest(c: &Connection, id: &str) -> Result<String> {
     for row in &rows {
         let tools: Vec<serde_json::Value> = serde_json::from_str(&row.3)?;
         for tool in tools {
-            if !matches!(
-                tool["name"].as_str(),
-                Some("Bash" | "exec" | "shell" | "exec_command")
-            ) {
+            if !tool["name"]
+                .as_str()
+                .is_some_and(|n| crate::model::COMMAND_TOOLS.contains(&n))
+            {
                 continue;
             }
             for line in tool["output"].as_str().unwrap_or("").lines() {
