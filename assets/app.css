@@ -488,11 +488,13 @@ kbd:first-child, kbd + kbd { margin-left: 0; }
 .cc { flex-shrink: 0; }
 .warn { margin: 0; color: var(--warn); font-size: 14px; }
 
-.summary h2 { font: 600 13px/1.2 var(--sans); color: var(--ink); margin: 0; }
-.sum-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px var(--act-inset) 6px 0; }
-.nosum-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px var(--act-inset) 0 0; }
-.gen { font-weight: 400; color: var(--faint); margin-left: 6px; }
-.nosum { margin: 0; font-size: 14px; color: var(--faint); max-width: 74ch; }
+/* Laid out like a turn (.mrow): label column, then text that starts where the
+   replies' text does, so both wrap at the same 74ch right edge. */
+.summary { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 8px 20px; align-items: start; padding-left: 16px; margin-right: var(--act-inset); }
+.summary h2 { font: 600 13px/1.2 var(--sans); color: var(--ink); margin: 0; padding-top: 5px; }
+.gen { display: block; font-weight: 400; color: var(--faint); margin-top: 4px; }
+.summary .task-err { grid-column: 2 / -1; margin: 0; }
+.nosum { margin: 0; font-size: 14px; line-height: 1.6; color: var(--faint); max-width: 74ch; }
 .ssum { font-size: 15px; line-height: 1.6; color: var(--muted); max-width: 74ch; }
 
 .reindex-ctrl { margin: 0 var(--act-inset) 0 auto; display: inline-flex; align-items: center; gap: 8px; }
@@ -690,6 +692,9 @@ kbd:first-child, kbd + kbd { margin-left: 0; }
   .cc { align-self: flex-start; }
   .rh { --act-inset: 0px; }
   .reindex-ctrl { margin-left: 0; }
-  .nosum-row { flex-direction: column; align-items: flex-start; }
+  .summary { grid-template-columns: minmax(0, 1fr) auto; padding-left: 0; }
+  .gen { display: inline; margin-left: 6px; }
+  .summary .ssum, .summary .nosum, .summary .task-err { grid-column: 1 / -1; }
+  .summary .task-form { grid-column: 2; grid-row: 1; }
   .turn-index { display: none; }
 }

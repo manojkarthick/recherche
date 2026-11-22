@@ -1,25 +1,15 @@
-<section class="summary" id="session-summary"{% if summary.is_some() %} aria-labelledby="sum-h"{% endif %}{% if summarize_poll %} hx-get="/session/summarize?session={{ session_enc }}" hx-trigger="every 750ms" hx-swap="outerHTML"{% endif %}>
+<section class="summary" id="session-summary" aria-labelledby="sum-h"{% if summarize_poll %} hx-get="/session/summarize?session={{ session_enc }}" hx-trigger="every 750ms" hx-swap="outerHTML"{% endif %}>
+  <h2 id="sum-h">Summary{% if summary.is_some() %} <span class="gen" title="Written by a language model from the transcript">generated</span>{% endif %}</h2>
   {% if let Some(s) = summary %}
-  <div class="sum-head">
-    <h2 id="sum-h">Summary <span class="gen" title="Written by a language model from the transcript">generated</span></h2>
-    {% if can_summarize %}
-    <form class="task-form" hx-post="/session/summarize" hx-target="#session-summary" hx-swap="outerHTML">
-      <input type="hidden" name="session" value="{{ session_id }}">
-      <button type="submit" class="btn task-btn sum-btn{% if summarize_busy %} busy{% endif %}"{% if summarize_busy %} disabled{% endif %} title="Generate a new summary for this session">{{ summarize_label }}</button>
-    </form>
-    {% endif %}
-  </div>
   <div class="ssum">{{ s|safe }}</div>
   {% else if let Some(n) = summary_note %}
-  <div class="nosum-row">
-    <p class="nosum">{{ n }}</p>
-    {% if can_summarize %}
-    <form class="task-form" hx-post="/session/summarize" hx-target="#session-summary" hx-swap="outerHTML">
-      <input type="hidden" name="session" value="{{ session_id }}">
-      <button type="submit" class="btn task-btn sum-btn{% if summarize_busy %} busy{% endif %}"{% if summarize_busy %} disabled{% endif %} title="Summarize this session now">{{ summarize_label }}</button>
-    </form>
-    {% endif %}
-  </div>
+  <p class="nosum">{{ n }}</p>
+  {% endif %}
+  {% if can_summarize %}
+  <form class="task-form" hx-post="/session/summarize" hx-target="#session-summary" hx-swap="outerHTML">
+    <input type="hidden" name="session" value="{{ session_id }}">
+    <button type="submit" class="btn task-btn sum-btn{% if summarize_busy %} busy{% endif %}"{% if summarize_busy %} disabled{% endif %} title="{% if summary.is_some() %}Generate a new summary for this session{% else %}Summarize this session now{% endif %}">{{ summarize_label }}</button>
+  </form>
   {% endif %}
   {% if let Some(err) = summarize_err %}<p class="task-err" role="alert">{{ err }}</p>{% endif %}
 </section>
