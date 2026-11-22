@@ -29,7 +29,7 @@ use std::sync::Arc;
 #[command(
     name = "recherche",
     version,
-    about = "Search your past Claude Code and Codex sessions"
+    about = "Search your past Claude Code, Codex and Antigravity sessions"
 )]
 struct Cli {
     /// Config file. Default: $XDG_CONFIG_HOME/recherche/config.toml
@@ -441,14 +441,12 @@ pub fn agent_resume(s: &store::SessionMeta) -> String {
     resume_argv(s).join(" ")
 }
 
-/// Claude subagents resume through their parent session.
+/// Claude and Antigravity subagents resume through their parent session.
 pub fn resume_argv(s: &store::SessionMeta) -> [&str; 3] {
+    let top = s.parent_id.as_deref().unwrap_or(&s.id);
     match s.source.as_str() {
-        "claude" => [
-            "claude",
-            "--resume",
-            s.parent_id.as_deref().unwrap_or(&s.id),
-        ],
+        "claude" => ["claude", "--resume", top],
+        "antigravity" => ["agy", "--conversation", top],
         _ => ["codex", "resume", &s.id],
     }
 }
@@ -529,6 +527,7 @@ fn doctor(cfg: config::Config, env_status: &config::EnvFileStatus) -> Result<()>
     println!("data         {}", config::data_dir().display());
     println!("claude       {}", engine.cfg.claude_dir().display());
     println!("codex        {}", engine.cfg.codex_dir().display());
+    println!("antigravity  {}", engine.cfg.antigravity_dir().display());
     let mut st = c.prepare("SELECT source, COUNT(*), SUM(skip), SUM(bad_lines), SUM(summary IS NOT NULL) FROM sessions GROUP BY source")?;
     for row in st.query_map([], |r| {
         Ok((

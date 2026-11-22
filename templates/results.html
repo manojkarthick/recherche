@@ -23,7 +23,7 @@
   {% for s in r.snippets %}<p class="snippet">{{ s|safe }}</p>{% endfor %}
   <div class="r-foot">
     <div class="r-refs">
-    <span class="agent-tag"><span class="logo {{ r.agent }}" role="img" aria-label="{% if r.agent == "claude" %}Claude Code{% else %}Codex{% endif %}" title="{% if r.agent == "claude" %}Claude Code{% else %}Codex{% endif %}"></span>{% if r.is_sub %}<span class="sub">subagent</span>{% endif %}</span>
+    <span class="agent-tag"><span class="logo {{ r.agent }}" role="img" aria-label="{{ crate::web::agent_product(r.agent) }}" title="{{ crate::web::agent_product(r.agent) }}"></span>{% if r.is_sub %}<span class="sub">subagent</span>{% endif %}</span>
     <div class="r-lines">
     {% for line in crate::web::chip_lines(r.chips) %}<div class="r-line">{% for c in line %}{% include "chip.html" %}{% endfor %}{% if loop.first %}{% for n in r.notes %}<span class="gnote">{{ n }}</span>{% endfor %}{% endif %}</div>{% endfor %}
     </div>

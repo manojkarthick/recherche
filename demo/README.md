@@ -8,8 +8,8 @@ cargo run -- demo                          # /tmp/recherche-demo, http://127.0.0
 cargo run -- demo /tmp/other --listen 127.0.0.1:7779
 ```
 
-Each run replaces the directory. It writes the sessions as Claude Code and Codex
-would, including compressing Codex sessions idle for over a week to
+Each run replaces the directory. It writes the sessions as Claude Code, Codex and
+Antigravity would, including compressing Codex sessions idle for over a week to
 `.jsonl.zst`, indexes them, stores their summaries and starts the server. Your own
 sessions and data are not touched. Summaries are on, so the UI explains missing
 ones, but the API is a closed local port, so nothing is sent anywhere. The first
@@ -28,15 +28,17 @@ relative to now. `{root}` anywhere in the file becomes the demo directory, for
 paths in tool inputs.
 
 ```toml
-agent = "claude"                 # or "codex"
+agent = "claude"                 # or "codex" or "antigravity"
 cwd = "code/widgets"             # relative to the demo directory
 cwd_gone = false                 # true: leave it uncreated, like a deleted worktree
 branch = "fix/WID-1182-ordering"
 ago = "2d4h"                     # start time in d, h and m; activity in the last 20m is "in progress"
 model = "claude-opus-4-5"        # optional
 
+# Claude and Antigravity
+title = "Fix ordering"           # the agent's generated title; else the first prompt
+
 # Claude only
-title = "Fix ordering"           # Claude Code's generated title; else the first prompt
 pr = "acme/widgets#418"          # a PR the session opened
 parent = "order-dedupe"          # makes this a subagent of sessions/order-dedupe.toml
 
@@ -49,11 +51,11 @@ reply = '''
 Markdown is fine here.'''
 
 [[turns.tools]]
-command = "cargo test"           # Bash for Claude, a command execution for Codex
+command = "cargo test"           # Bash for Claude, a command execution for Codex, run_command for Antigravity
 output = "..."
-error = true                     # a failed call, or a nonzero exit for Codex
+error = true                     # a failed call, or a nonzero exit for Codex and Antigravity
 
-[[turns.tools]]                  # Claude only: any tool by name
+[[turns.tools]]                  # Claude and Antigravity: any tool by name
 name = "Read"
 input = { file_path = "{root}/code/widgets/src/merge.rs" }
 output = "..."

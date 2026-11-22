@@ -30,6 +30,9 @@ exclude_entrypoints = ["sdk-cli"]   # `claude -p` runs
 # dir = "~/.codex"                  # default: $CODEX_HOME, then ~/.codex
 exclude_sources = ["exec"]          # `codex exec` runs
 
+[sources.antigravity]
+# dir = "~/.gemini/antigravity-cli"  # default
+
 [search]
 vectors = true
 rerank = true
@@ -46,6 +49,6 @@ rewrite_model = ""                         # empty: use `model`
 deny_data_collection = true                # only hosts that don't store prompts
 rewrite = true
 summaries = true
-summarize_sources = ["claude", "codex"]
+summarize_sources = ["claude", "codex", "antigravity"]
 summarize_exclude_paths = []  # cwd substrings never sent for summaries
 idle_minutes = 20

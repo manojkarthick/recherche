@@ -28,6 +28,7 @@ pub struct Config {
 pub struct Sources {
     pub claude: ClaudeSource,
     pub codex: CodexSource,
+    pub antigravity: AntigravitySource,
     pub poll_seconds: u64,
 }
 
@@ -47,6 +48,13 @@ pub struct CodexSource {
     /// Sessions whose `session_meta.source` is listed here are not indexed.
     /// `exec` is `codex exec`.
     pub exclude_sources: Vec<String>,
+}
+
+/// The Antigravity CLI (`agy`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct AntigravitySource {
+    pub dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -122,6 +130,7 @@ impl Default for Sources {
         Self {
             claude: ClaudeSource::default(),
             codex: CodexSource::default(),
+            antigravity: AntigravitySource::default(),
             poll_seconds: 30,
         }
     }
@@ -156,7 +165,7 @@ impl Default for Llm {
             deny_data_collection: true,
             rewrite: true,
             summaries: true,
-            summarize_sources: vec!["claude".into(), "codex".into()],
+            summarize_sources: vec!["claude".into(), "codex".into(), "antigravity".into()],
             summarize_exclude_paths: vec![],
             idle_minutes: 20,
         }
@@ -285,6 +294,14 @@ impl Config {
                 Some(d) => PathBuf::from(d),
                 None => home().join(".codex"),
             })
+    }
+
+    pub fn antigravity_dir(&self) -> PathBuf {
+        self.sources
+            .antigravity
+            .dir
+            .clone()
+            .unwrap_or_else(|| home().join(".gemini/antigravity-cli"))
     }
 
     pub fn is_loopback(&self) -> bool {

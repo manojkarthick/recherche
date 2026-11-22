@@ -67,7 +67,7 @@ Returned by session details and entity lookups.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `id` | string | Native session ID |
-| `agent` | string | Source agent, `claude` or `codex` |
+| `agent` | string | Source agent, `claude`, `codex` or `antigravity` |
 | `parent_id` | string or null | Parent session ID |
 | `children` | string array | Direct child IDs, in lexical order |
 | `host` | string | Recorded hostname; empty if unknown |
@@ -106,7 +106,7 @@ is `4` opened, `3` linked, `2` pushed for, `1` mentioned.
 
 `resume_argv` is the same command the browser and CLI show, without the `cd`:
 `["claude", "--resume", "<id>"]`, where Claude subagents target their parent,
-or `["codex", "resume", "<id>"]`. Run it in `cwd` on `host`; the API does not
+`["codex", "resume", "<id>"]`, or `["agy", "--conversation", "<id>"]`. Run it in `cwd` on `host`; the API does not
 check that either is available and launches nothing.
 
 ## Search

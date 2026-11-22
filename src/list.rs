@@ -298,6 +298,7 @@ impl Style {
         match source {
             "claude" => self.yellow(s),
             "codex" => self.cyan(s),
+            "antigravity" => self.blue(s),
             _ => self.dim(s),
         }
     }

@@ -48,7 +48,7 @@
     <div class="rh-meta">
       <time title="{{ started }} to {{ ended }}">{{ day }}</time>
       <span class="rh-dur">{{ duration }}</span>
-      <span class="rh-agent">{% if agent == "claude" %}Claude Code{% else %}Codex{% endif %}</span>
+      <span class="rh-agent">{{ crate::web::agent_product(agent) }}</span>
       {% if !model.is_empty() %}<span class="rh-model">{{ model }}</span>{% endif %}
       {% include "session_reindex.html" %}
     </div>
@@ -118,7 +118,7 @@
     <div class="mrow reply">
       <div class="mg">
         <div class="mg-top">
-          <span class="who-agent">{% if agent == "claude" %}Claude{% else %}Codex{% endif %}</span>
+          <span class="who-agent">{{ crate::web::agent_name(agent) }}</span>
           {% if t.user.is_empty() %}<time title="{{ t.when }}">{{ t.time }}</time>{% endif %}
         </div>
         {% if t.user.is_empty() && (t.day.is_some() || t.matched) %}

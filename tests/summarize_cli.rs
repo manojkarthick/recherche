@@ -36,7 +36,7 @@ async fn cli_fails_on_provider_error_and_keeps_completed_summaries() {
         std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n")).unwrap();
     }
     let config = dir.path().join("config.toml");
-    std::fs::write(&config, format!("[search]\nvectors = false\nrerank = false\n[sources.claude]\ndir = {:?}\n[sources.codex]\ndir = {:?}\n[llm]\nbase_url = \"http://{addr}\"\napi_key_env = \"QA_TEST_API_KEY\"\n", claude, codex)).unwrap();
+    std::fs::write(&config, format!("[search]\nvectors = false\nrerank = false\n[sources.claude]\ndir = {:?}\n[sources.codex]\ndir = {:?}\n[sources.antigravity]\ndir = {:?}\n[llm]\nbase_url = \"http://{addr}\"\napi_key_env = \"QA_TEST_API_KEY\"\n", claude, codex, dir.path().join("antigravity"))).unwrap();
     let data = dir.path().join("data");
     let result = std::process::Command::new(env!("CARGO_BIN_EXE_recherche"))
         .arg("--config")

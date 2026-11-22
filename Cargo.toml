@@ -2,7 +2,7 @@
 name = "recherche"
 version = "0.4.0"
 edition = "2024"
-description = "Search your past Claude Code and Codex sessions"
+description = "Search your past Claude Code, Codex and Antigravity sessions"
 license = "MIT"
 
 [dependencies]

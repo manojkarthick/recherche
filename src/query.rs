@@ -64,7 +64,7 @@ static FILLER: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         r"^(the|that|a|an|some)\s+",
         r"^(thread|session|conversation|chat|time|one)s?\s+",
         r"^(where|in which|when|that|in that|wherein)\s+",
-        r"^(we|i|you|claude|codex)\s+",
+        r"^(we|i|you|claude|codex|antigravity)\s+",
         r"^(were|was|have|had|did)\s+",
         r"^(talked about|talking about|worked on|working on|looked at|looking at|about|on)\s+",
     ]
