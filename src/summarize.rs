@@ -97,15 +97,17 @@ pub enum Pending {
     Backfill,
 }
 
+/// Whether this session is eligible for summarization under the current config
+/// (top-level session, allowed source, and not under an excluded path).
+pub fn eligible(cfg: &Config, s: &store::SessionMeta) -> bool {
+    s.parent_id.is_none() && allowed(cfg, &s.source, s.cwd.as_deref().unwrap_or(""))
+}
+
 /// Mirrors the filters in `candidates`, assuming summaries are enabled.
 /// `None` when the session has a summary or recap, or will never get one
 /// (a subagent, or excluded by source or path).
 pub fn pending(cfg: &Config, since: i64, s: &store::SessionMeta, now: i64) -> Option<Pending> {
-    if s.summary.is_some()
-        || s.recap.is_some()
-        || s.parent_id.is_some()
-        || !allowed(cfg, &s.source, s.cwd.as_deref().unwrap_or(""))
-    {
+    if s.summary.is_some() || s.recap.is_some() || !eligible(cfg, s) {
         return None;
     }
     Some(if s.started < since {
@@ -205,6 +207,153 @@ pub fn save(c: &Connection, id: &str, s: &Summary, turns: i64) -> Result<()> {
     Ok(())
 }
 
+/// Summarizes one session on demand, bypassing inactivity and growth checks
+/// while still honoring `summaries_enabled`, source/path exclusions, and
+/// top-level session rules.
+pub async fn summarize_session(
+    llm: &Llm,
+    cfg: &Config,
+    db: &std::path::Path,
+    id: &str,
+) -> Result<Summary> {
+    use rusqlite::OptionalExtension;
+
+    if !llm.summaries_enabled() {
+        anyhow::bail!(
+            "Summaries are off: set {} and keep llm.summaries = true.",
+            cfg.llm.api_key_env
+        );
+    }
+    let cand = {
+        let c = store::open(db)?;
+        let row: Option<(String, String, i64, Option<String>, bool, String)> = c
+            .query_row(
+                "SELECT source, COALESCE(cwd, ''), turn_count, parent_id, skip, COALESCE(repo_key, '')
+                 FROM sessions WHERE id = ?",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            )
+            .optional()?;
+        let Some((source, cwd, turns, parent_id, skip, repo)) = row else {
+            anyhow::bail!("No session with that ID.");
+        };
+        if skip || turns <= 0 {
+            anyhow::bail!("Session has no searchable turns to summarize.");
+        }
+        if parent_id.is_some() {
+            anyhow::bail!("Subagent sessions are not summarized.");
+        }
+        if !allowed(cfg, &source, &cwd) {
+            anyhow::bail!("This session is excluded from summaries by configuration.");
+        }
+        Candidate {
+            digest: digest(&c, id)?,
+            repo: if repo.is_empty() {
+                source
+            } else {
+                crate::extract::repo_display(&repo)
+            },
+            id: id.to_string(),
+            turns,
+        }
+    };
+    let s = llm.summarize(&cand.digest).await?;
+    tracing::info!(
+        "summarized {} \"{}\" ({}, on demand)",
+        cand.repo,
+        clip_chars(&s.title, 60),
+        crate::util::count(cand.turns as usize, "turn"),
+    );
+    save(&store::open(db)?, &cand.id, &s, cand.turns)?;
+    Ok(s)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RunOptions {
+    pub backfill: bool,
+    pub force: bool,
+    pub limit: usize,
+    pub progress: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchResult {
+    pub summarized: usize,
+    pub total: usize,
+    pub cancelled: bool,
+    pub error: Option<String>,
+}
+
+/// Summarizes all eligible sessions needing a summary (including older
+/// backfill sessions), reporting progress and stopping cleanly on cancel or
+/// API failure. Used by the web UI's on-demand "Summarize all" task.
+pub async fn run_batch(
+    llm: &Llm,
+    cfg: &Config,
+    db: &std::path::Path,
+    mut on_progress: impl FnMut(usize, usize),
+    mut on_saved: impl FnMut(),
+    is_cancelled: impl Fn() -> bool,
+) -> Result<BatchResult> {
+    if !llm.summaries_enabled() {
+        anyhow::bail!(
+            "Summaries are off: set {} and keep llm.summaries = true.",
+            cfg.llm.api_key_env
+        );
+    }
+    let todo = {
+        let c = store::open(db)?;
+        candidates(&c, cfg, true, false)?
+    };
+    let total = todo.len();
+    let mut summarized = 0;
+    for (i, cand) in todo.into_iter().enumerate() {
+        if is_cancelled() {
+            return Ok(BatchResult {
+                summarized,
+                total,
+                cancelled: true,
+                error: None,
+            });
+        }
+        on_progress(i + 1, total);
+        match llm.summarize(&cand.digest).await {
+            Ok(s) => {
+                tracing::info!(
+                    "summarized {} \"{}\" ({}, {}/{total}, on demand)",
+                    cand.repo,
+                    clip_chars(&s.title, 60),
+                    crate::util::count(cand.turns as usize, "turn"),
+                    i + 1
+                );
+                save(&store::open(db)?, &cand.id, &s, cand.turns)?;
+                summarized += 1;
+                on_saved();
+            }
+            Err(e) => {
+                let msg = format!("{e:#}");
+                tracing::warn!(
+                    "[{}/{total}] summary for {} failed, stopping: {msg}",
+                    i + 1,
+                    cand.id
+                );
+                return Ok(BatchResult {
+                    summarized,
+                    total,
+                    cancelled: false,
+                    error: Some(msg),
+                });
+            }
+        }
+    }
+    Ok(BatchResult {
+        summarized,
+        total,
+        cancelled: false,
+        error: None,
+    })
+}
+
 /// Summarizes up to `limit` candidates. Stops on the first API failure, because the next call would most likely fail the same way.
 /// With `progress`, prints one line per session to stderr (for the CLI).
 pub async fn run(
@@ -216,20 +365,47 @@ pub async fn run(
     limit: usize,
     progress: bool,
 ) -> Result<usize> {
+    run_until(
+        llm,
+        cfg,
+        db,
+        RunOptions {
+            backfill,
+            force,
+            limit,
+            progress,
+        },
+        || false,
+    )
+    .await
+}
+
+/// Like `run`, but checks `stop()` before each session so the daemon can yield
+/// immediately to user-requested tasks.
+pub async fn run_until(
+    llm: &Llm,
+    cfg: &Config,
+    db: &std::path::Path,
+    opts: RunOptions,
+    stop: impl Fn() -> bool,
+) -> Result<usize> {
     if !llm.summaries_enabled() {
         return Ok(0);
     }
     let todo = {
         let c = store::open(db)?;
-        candidates(&c, cfg, backfill, force)?
+        candidates(&c, cfg, opts.backfill, opts.force)?
     };
-    let total = todo.len().min(limit);
+    let total = todo.len().min(opts.limit);
     let started = std::time::Instant::now();
     let mut n = 0;
-    for (i, cand) in todo.into_iter().take(limit).enumerate() {
+    for (i, cand) in todo.into_iter().take(opts.limit).enumerate() {
+        if stop() {
+            break;
+        }
         match llm.summarize(&cand.digest).await {
             Ok(s) => {
-                if progress {
+                if opts.progress {
                     eprintln!(
                         "[{}/{total}] {}  ({}s elapsed)",
                         i + 1,
@@ -369,6 +545,102 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         assert_eq!(stored, ("Existing summary".into(), 10));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn summarize_session_honors_exclusions_and_bypasses_idle_check() -> Result<()> {
+        use axum::routing::post;
+        use axum::{Json, Router};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let app = Router::new().route(
+            "/chat/completions",
+            post(|| async {
+                Json(serde_json::json!({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": serde_json::json!({
+                                "title": "On-demand title",
+                                "summary": "- Summarized on demand.",
+                                "kind": "bugfix",
+                                "outcome": "fixed",
+                                "tags": ["queue"]
+                            }).to_string()
+                        }
+                    }],
+                    "usage": {"completion_tokens": 25}
+                }))
+            }),
+        );
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let dir = tempfile::tempdir()?;
+        let db = dir.path().join("recherche.db");
+        let c = store::open(&db)?;
+        let now = chrono::Utc::now().timestamp();
+        store::set_meta(&c, "auto_summary_since", &(now + 3600).to_string())?;
+        for (id, source, cwd, parent) in [
+            ("active", "claude", "/work/app", None),
+            ("excluded", "claude", "/secret/app", None),
+            ("sub", "claude", "/work/app", Some("active")),
+            ("codex_off", "codex", "/work/app", None),
+        ] {
+            c.execute(
+                "INSERT INTO sessions (id, source, parent_id, host, cwd, title, started, ended, turn_count, archive_path, dirty)
+                 VALUES (?, ?, ?, 'test', ?, 'Prompt', ?, ?, 2, '', 0)",
+                params![id, source, parent, cwd, now - 60, now],
+            )?;
+            c.execute(
+                "INSERT INTO turns (session_id, idx, user_text, assistant_text, tool_text, files, commands, errors, tools_json, ukey, chash)
+                 VALUES (?, 0, 'fix the bug', 'done', '', '', '', '', '[]', ?, ?)",
+                params![id, id, id],
+            )?;
+        }
+
+        let mut cfg = Config::default();
+        cfg.llm.enabled = true;
+        cfg.llm.summaries = true;
+        cfg.llm.api_key_env = "HOME".into();
+        cfg.llm.base_url = format!("http://{addr}");
+        cfg.llm.summarize_sources = vec!["claude".into()];
+        cfg.llm.summarize_exclude_paths = vec!["/secret".into()];
+        let llm = Llm::new(cfg.llm.clone(), db.clone());
+
+        assert!(
+            summarize_session(&llm, &cfg, &db, "excluded")
+                .await
+                .is_err()
+        );
+        assert!(summarize_session(&llm, &cfg, &db, "sub").await.is_err());
+        assert!(
+            summarize_session(&llm, &cfg, &db, "codex_off")
+                .await
+                .is_err()
+        );
+        assert!(summarize_session(&llm, &cfg, &db, "missing").await.is_err());
+
+        let s = summarize_session(&llm, &cfg, &db, "active").await?;
+        assert_eq!(s.title, "On-demand title");
+        let stored: (String, String, i64, i64) = c.query_row(
+            "SELECT summary, llm_title, summary_turns, dirty FROM sessions WHERE id = 'active'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        assert_eq!(
+            stored,
+            (
+                "- Summarized on demand.".into(),
+                "On-demand title".into(),
+                2,
+                1
+            )
+        );
+        server.abort();
         Ok(())
     }
 }

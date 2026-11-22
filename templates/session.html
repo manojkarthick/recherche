@@ -6,6 +6,7 @@
 <title>{{ title }} – recherche</title>
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/htmx.min.js"></script>
 <script src="/assets/app.js" defer></script>
 </head>
 <body class="session-page" data-resume="{{ resume }}">
@@ -49,8 +50,9 @@
       <span class="rh-dur">{{ duration }}</span>
       <span class="rh-agent">{% if agent == "claude" %}Claude Code{% else %}Codex{% endif %}</span>
       {% if !model.is_empty() %}<span class="rh-model">{{ model }}</span>{% endif %}
+      {% include "session_reindex.html" %}
     </div>
-    <h1>{{ title }}</h1>
+    <h1 id="session-title">{{ title }}</h1>
     {% if !chips.is_empty() %}
     <div class="ref-lines">
       {% for line in crate::web::chip_lines(chips) %}<div class="refs">{% for c in line %}{% include "chip.html" %}{% endfor %}</div>{% endfor %}
@@ -65,13 +67,8 @@
       <button type="button" class="cc" data-copy="{{ resume }}" title="Copy resume command (c)"><span class="lbl">Copy resume command</span></button>
     </div>
     {% if cwd_gone %}<p class="warn">This directory no longer exists. Recreate it before resuming; the resume command will fail without it.</p>{% endif %}
-    {% if let Some(s) = summary %}
-    <section class="summary" aria-labelledby="sum-h">
-      <h2 id="sum-h">Summary <span class="gen" title="Written by a language model from the transcript">generated</span></h2>
-      <div class="ssum">{{ s|safe }}</div>
-    </section>
-    {% else if let Some(n) = summary_note %}
-    <p class="nosum">{{ n }}</p>
+    {% if summary.is_some() || summary_note.is_some() %}
+    {% include "session_summary.html" %}
     {% endif %}
   </header>
   <div class="turns">

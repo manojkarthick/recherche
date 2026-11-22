@@ -12,6 +12,7 @@ mod model;
 mod models;
 mod parse;
 mod query;
+mod queue;
 mod search;
 mod search_fmt;
 mod store;

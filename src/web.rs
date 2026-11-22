@@ -2,6 +2,7 @@
 //! Results stream in stages over SSE: keyword results first, then hybrid
 //! and reranked, then (when it helps) results refined by an LLM rewrite.
 
+use crate::queue::{Task, TaskState};
 use crate::search::{Engine, Hit, Results};
 use crate::store::{Catalog, SessionMeta};
 use crate::summarize::Pending;
@@ -9,7 +10,7 @@ use crate::util::{fmt_ago, fmt_date, fmt_day, fmt_duration, fmt_time};
 use anyhow::Result;
 use askama::Template;
 use axum::extract::{Path as AxPath, Query, Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
@@ -44,6 +45,15 @@ pub(crate) fn router(engine: Arc<Engine>) -> Router {
         .route("/search", get(search_fragment))
         .route("/stream", get(stream))
         .route("/s/{*id}", get(session_page))
+        .route(
+            "/session/summarize",
+            get(summarize_status).post(summarize_start),
+        )
+        .route("/session/reindex", get(reindex_status).post(reindex_start))
+        .route("/tasks/all", get(all_tasks_status))
+        .route("/tasks/reindex", post(reindex_all_start))
+        .route("/tasks/summarize", post(summarize_all_start))
+        .route("/tasks/summarize/cancel", post(summarize_all_cancel))
         .route("/e", get(entity_page))
         .route("/feedback", post(feedback))
         .route("/assets/{*path}", get(asset))
@@ -325,11 +335,36 @@ struct ResultsTpl {
 }
 
 #[derive(Template)]
+#[template(path = "all_tasks.html")]
+struct AllTasksTpl {
+    summaries_enabled: bool,
+    all_poll: bool,
+    all_since: u64,
+    reindex_all_busy: bool,
+    reindex_all_label: &'static str,
+    summarize_all_busy: bool,
+    summarize_all_label: String,
+    all_done: Option<String>,
+    all_err: Option<String>,
+    oob_sessions: Option<usize>,
+}
+
+#[derive(Template)]
 #[template(path = "index.html")]
 struct IndexTpl {
     q: String,
     results_html: String,
     sessions: usize,
+    summaries_enabled: bool,
+    all_poll: bool,
+    all_since: u64,
+    reindex_all_busy: bool,
+    reindex_all_label: &'static str,
+    summarize_all_busy: bool,
+    summarize_all_label: String,
+    all_done: Option<String>,
+    all_err: Option<String>,
+    oob_sessions: Option<usize>,
 }
 
 pub fn chips_for(cat: &Catalog, s: &SessionMeta) -> Vec<Chip> {
@@ -1043,11 +1078,28 @@ async fn index(
     let p2 = p.clone();
     let results_html = tokio::task::spawn_blocking(move || first_stage(&e2, &p2)).await??;
     let sessions = e.catalog().sessions.len();
+    let tasks = all_tasks_view(
+        &e,
+        e.tasks.page_state(&Task::ReindexAll, TASK_ERR_TTL),
+        e.tasks.page_state(&Task::SummarizeAll, TASK_ERR_TTL),
+        e.tasks.completed_seq(),
+        None,
+    );
     Ok(Html(
         IndexTpl {
             q: p.q.clone(),
             results_html,
             sessions,
+            summaries_enabled: tasks.summaries_enabled,
+            all_poll: tasks.all_poll,
+            all_since: tasks.all_since,
+            reindex_all_busy: tasks.reindex_all_busy,
+            reindex_all_label: tasks.reindex_all_label,
+            summarize_all_busy: tasks.summarize_all_busy,
+            summarize_all_label: tasks.summarize_all_label,
+            all_done: tasks.all_done,
+            all_err: tasks.all_err,
+            oob_sessions: None,
         }
         .render()?,
     ))
@@ -1198,14 +1250,54 @@ pub struct EntityGroup {
     pub items: Vec<(String, String, String, String)>,
 }
 
+const TASK_ERR_TTL: Duration = Duration::from_secs(60);
+
+#[derive(Template)]
+#[template(path = "session_summary.html")]
+struct SessionSummaryTpl {
+    session_id: String,
+    session_enc: String,
+    summary: Option<String>,
+    summary_note: Option<String>,
+    can_summarize: bool,
+    summarize_poll: bool,
+    summarize_busy: bool,
+    summarize_label: &'static str,
+    summarize_err: Option<String>,
+    oob_title: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "session_reindex.html")]
+struct SessionReindexTpl {
+    session_id: String,
+    session_enc: String,
+    reindex_poll: bool,
+    reindex_busy: bool,
+    reindex_label: &'static str,
+    reindex_err: Option<String>,
+}
+
 #[derive(Template)]
 #[template(path = "session.html")]
 struct SessionTpl {
+    session_id: String,
+    session_enc: String,
     title: String,
     agent: String,
     summary: Option<String>,
     /// Why there is no summary yet, shown in its place.
     summary_note: Option<String>,
+    can_summarize: bool,
+    summarize_poll: bool,
+    summarize_busy: bool,
+    summarize_label: &'static str,
+    summarize_err: Option<String>,
+    oob_title: Option<String>,
+    reindex_poll: bool,
+    reindex_busy: bool,
+    reindex_label: &'static str,
+    reindex_err: Option<String>,
     chips: Vec<Chip>,
     cwd: String,
     cwd_gone: bool,
@@ -1224,6 +1316,302 @@ struct SessionTpl {
     children: Vec<(String, String)>,
     q: String,
     back: String,
+}
+
+fn session_title(s: &SessionMeta) -> String {
+    if s.title.is_empty() {
+        "Untitled session".into()
+    } else {
+        s.title.clone()
+    }
+}
+
+fn summary_view(
+    e: &Engine,
+    cat: &Catalog,
+    s: &SessionMeta,
+    state: Option<TaskState>,
+    include_oob_title: bool,
+) -> SessionSummaryTpl {
+    let can_summarize = e.llm.summaries_enabled() && crate::summarize::eligible(&e.cfg, s);
+    let has_llm_summary = s.summary.is_some();
+    let idle_label = if has_llm_summary {
+        "Regenerate"
+    } else {
+        "Summarize"
+    };
+    let (summarize_poll, summarize_busy, summarize_label, summarize_err) = match state {
+        Some(TaskState::Queued) => (true, true, "Queued…", None),
+        Some(TaskState::Running(_)) => (true, true, "Summarizing…", None),
+        Some(TaskState::Failed(err)) => (false, false, idle_label, Some(err)),
+        Some(TaskState::Done(_)) | None => (false, false, idle_label, None),
+    };
+    SessionSummaryTpl {
+        session_id: s.id.clone(),
+        session_enc: enc(&s.id),
+        summary: s
+            .summary
+            .as_deref()
+            .or(s.recap.as_deref())
+            .map(|s| summary_html(s, &[])),
+        summary_note: pending(e, cat, s).map(|p| pending_note(p, e.cfg.llm.idle_minutes)),
+        can_summarize,
+        summarize_poll,
+        summarize_busy,
+        summarize_label,
+        summarize_err,
+        oob_title: include_oob_title.then(|| session_title(s)),
+    }
+}
+
+fn reindex_view(session_id: &str, state: Option<TaskState>) -> SessionReindexTpl {
+    let (reindex_poll, reindex_busy, reindex_label, reindex_err) = match state {
+        Some(TaskState::Queued) => (true, true, "Queued…", None),
+        Some(TaskState::Running(_)) => (true, true, "Re-indexing…", None),
+        Some(TaskState::Failed(err)) => (false, false, "Re-index", Some(err)),
+        Some(TaskState::Done(_)) | None => (false, false, "Re-index", None),
+    };
+    SessionReindexTpl {
+        session_id: session_id.to_string(),
+        session_enc: enc(session_id),
+        reindex_poll,
+        reindex_busy,
+        reindex_label,
+        reindex_err,
+    }
+}
+
+fn all_tasks_view(
+    e: &Engine,
+    reindex_state: Option<TaskState>,
+    summarize_state: Option<TaskState>,
+    all_since: u64,
+    oob_sessions: Option<usize>,
+) -> AllTasksTpl {
+    let mut done_msgs = vec![];
+    let mut err_msgs = vec![];
+    let (reindex_all_busy, reindex_all_label) = match reindex_state {
+        Some(TaskState::Queued) => (true, "Queued…"),
+        Some(TaskState::Running(_)) => (true, "Re-indexing…"),
+        Some(TaskState::Done(msg)) => {
+            if let Some(m) = msg {
+                done_msgs.push(m);
+            }
+            (false, "Re-index all")
+        }
+        Some(TaskState::Failed(err)) => {
+            err_msgs.push(err);
+            (false, "Re-index all")
+        }
+        None => (false, "Re-index all"),
+    };
+    let (summarize_all_busy, summarize_all_label) = match summarize_state {
+        Some(TaskState::Queued) => (true, "Queued…".into()),
+        Some(TaskState::Running(Some(p))) => (true, format!("Summarizing {p}…")),
+        Some(TaskState::Running(None)) => (true, "Summarizing…".into()),
+        Some(TaskState::Done(msg)) => {
+            if let Some(m) = msg {
+                done_msgs.push(m);
+            }
+            (false, "Summarize all".into())
+        }
+        Some(TaskState::Failed(err)) => {
+            err_msgs.push(err);
+            (false, "Summarize all".into())
+        }
+        None => (false, "Summarize all".into()),
+    };
+    AllTasksTpl {
+        summaries_enabled: e.llm.summaries_enabled(),
+        all_poll: reindex_all_busy || summarize_all_busy,
+        all_since,
+        reindex_all_busy,
+        reindex_all_label,
+        summarize_all_busy,
+        summarize_all_label,
+        all_done: (!done_msgs.is_empty()).then(|| done_msgs.join(" · ")),
+        all_err: (!err_msgs.is_empty()).then(|| err_msgs.join(" · ")),
+        oob_sessions,
+    }
+}
+
+#[derive(Deserialize)]
+struct AllTasksQuery {
+    #[serde(default)]
+    since: u64,
+}
+
+async fn all_tasks_status(
+    State(e): State<AppState>,
+    Query(q): Query<AllTasksQuery>,
+) -> Result<Response, AppError> {
+    let cur_seq = e.tasks.completed_seq();
+    let updated = cur_seq > q.since;
+    let reindex_state = e.tasks.poll_state(&Task::ReindexAll, q.since);
+    let summarize_state = e.tasks.poll_state(&Task::SummarizeAll, q.since);
+    let oob_sessions = updated.then(|| e.catalog().sessions.len());
+    let html =
+        all_tasks_view(&e, reindex_state, summarize_state, cur_seq, oob_sessions).render()?;
+    let mut resp = no_store_html(html);
+    if updated {
+        resp.headers_mut()
+            .insert("HX-Trigger", HeaderValue::from_static("tasks-updated"));
+    }
+    Ok(resp)
+}
+
+async fn reindex_all_start(
+    State(e): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    if let Some(err) = check_same_origin(&headers) {
+        return Ok(err.into_response());
+    }
+    let since = e.tasks.completed_seq();
+    let reindex_state = e.tasks.enqueue(Task::ReindexAll);
+    let summarize_state = e.tasks.poll_state(&Task::SummarizeAll, since);
+    let html = all_tasks_view(&e, Some(reindex_state), summarize_state, since, None).render()?;
+    Ok(no_store_html(html))
+}
+
+async fn summarize_all_start(
+    State(e): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    if let Some(err) = check_same_origin(&headers) {
+        return Ok(err.into_response());
+    }
+    if !e.llm.summaries_enabled() {
+        return Ok((StatusCode::BAD_REQUEST, "Summaries are disabled.").into_response());
+    }
+    let since = e.tasks.completed_seq();
+    let summarize_state = e.tasks.enqueue(Task::SummarizeAll);
+    let reindex_state = e.tasks.poll_state(&Task::ReindexAll, since);
+    let html = all_tasks_view(&e, reindex_state, Some(summarize_state), since, None).render()?;
+    Ok(no_store_html(html))
+}
+
+async fn summarize_all_cancel(
+    State(e): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    if let Some(err) = check_same_origin(&headers) {
+        return Ok(err.into_response());
+    }
+    let before = e.tasks.completed_seq();
+    let summarize_state = e.tasks.cancel(&Task::SummarizeAll);
+    let after = e.tasks.completed_seq();
+    let reindex_state = e.tasks.poll_state(&Task::ReindexAll, before);
+    let html = all_tasks_view(&e, reindex_state, summarize_state, after, None).render()?;
+    Ok(no_store_html(html))
+}
+
+fn check_same_origin(headers: &HeaderMap) -> Option<(StatusCode, &'static str)> {
+    if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok())
+        && !matches!(site, "same-origin" | "none")
+    {
+        return Some((
+            StatusCode::FORBIDDEN,
+            "Cross-site requests are not allowed.",
+        ));
+    }
+    if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+        let origin_host = origin
+            .strip_prefix("http://")
+            .or_else(|| origin.strip_prefix("https://"))
+            .map(|rest| rest.split('/').next().unwrap_or(rest));
+        if host.is_none() || origin_host != host {
+            return Some((StatusCode::FORBIDDEN, "Origin mismatch."));
+        }
+    }
+    None
+}
+
+fn no_store_html(html: String) -> Response {
+    let mut resp = Html(html).into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp
+}
+
+#[derive(Deserialize)]
+struct TaskSession {
+    session: String,
+}
+
+async fn summarize_start(
+    State(e): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<TaskSession>,
+) -> Result<Response, AppError> {
+    if let Some(err) = check_same_origin(&headers) {
+        return Ok(err.into_response());
+    }
+    let cat = e.catalog();
+    let Some(s) = cat.sessions.get(&form.session) else {
+        return Ok((StatusCode::NOT_FOUND, "No session with that ID.").into_response());
+    };
+    if !e.llm.summaries_enabled() || !crate::summarize::eligible(&e.cfg, s) {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            "Summaries are unavailable for this session.",
+        )
+            .into_response());
+    }
+    let state = e.tasks.enqueue(Task::summarize(&s.id));
+    let html = summary_view(&e, &cat, s, Some(state), false).render()?;
+    Ok(no_store_html(html))
+}
+
+async fn summarize_status(
+    State(e): State<AppState>,
+    Query(q): Query<TaskSession>,
+) -> Result<Response, AppError> {
+    let cat = e.catalog();
+    let Some(s) = cat.sessions.get(&q.session) else {
+        return Ok((StatusCode::NOT_FOUND, "No session with that ID.").into_response());
+    };
+    let state = e.tasks.state(&Task::summarize(&s.id));
+    let done = matches!(state, Some(TaskState::Done(_)));
+    let html = summary_view(&e, &cat, s, state, done).render()?;
+    Ok(no_store_html(html))
+}
+
+async fn reindex_start(
+    State(e): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<TaskSession>,
+) -> Result<Response, AppError> {
+    if let Some(err) = check_same_origin(&headers) {
+        return Ok(err.into_response());
+    }
+    let cat = e.catalog();
+    let Some(s) = cat.sessions.get(&form.session) else {
+        return Ok((StatusCode::NOT_FOUND, "No session with that ID.").into_response());
+    };
+    let state = e.tasks.enqueue(Task::reindex(&s.id));
+    let html = reindex_view(&s.id, Some(state)).render()?;
+    Ok(no_store_html(html))
+}
+
+async fn reindex_status(
+    State(e): State<AppState>,
+    Query(q): Query<TaskSession>,
+) -> Result<Response, AppError> {
+    let cat = e.catalog();
+    let state = e.tasks.state(&Task::reindex(&q.session));
+    if !cat.sessions.contains_key(&q.session) && state.is_none() {
+        return Ok((StatusCode::NOT_FOUND, "No session with that ID.").into_response());
+    }
+    let done = matches!(state, Some(TaskState::Done(_)));
+    let html = reindex_view(&q.session, state).render()?;
+    let mut resp = no_store_html(html);
+    if done {
+        resp.headers_mut()
+            .insert("HX-Refresh", HeaderValue::from_static("true"));
+    }
+    Ok(resp)
 }
 
 #[derive(Deserialize)]
@@ -1368,19 +1756,34 @@ async fn session_page(
                 )
             })
         };
+        let sum = summary_view(
+            &e,
+            &cat,
+            s,
+            e.tasks.page_state(&Task::summarize(&s.id), TASK_ERR_TTL),
+            false,
+        );
+        let reidx = reindex_view(
+            &s.id,
+            e.tasks.page_state(&Task::reindex(&s.id), TASK_ERR_TTL),
+        );
         let tpl = SessionTpl {
-            title: if s.title.is_empty() {
-                "Untitled session".into()
-            } else {
-                s.title.clone()
-            },
+            session_id: sum.session_id,
+            session_enc: sum.session_enc,
+            title: session_title(s),
             agent: s.source.clone(),
-            summary: s
-                .summary
-                .as_deref()
-                .or(s.recap.as_deref())
-                .map(|s| summary_html(s, &[])),
-            summary_note: pending(&e, &cat, s).map(|p| pending_note(p, e.cfg.llm.idle_minutes)),
+            summary: sum.summary,
+            summary_note: sum.summary_note,
+            can_summarize: sum.can_summarize,
+            summarize_poll: sum.summarize_poll,
+            summarize_busy: sum.summarize_busy,
+            summarize_label: sum.summarize_label,
+            summarize_err: sum.summarize_err,
+            oob_title: None,
+            reindex_poll: reidx.reindex_poll,
+            reindex_busy: reidx.reindex_busy,
+            reindex_label: reidx.reindex_label,
+            reindex_err: reidx.reindex_err,
             chips: chips_for(&cat, s),
             cwd: s.cwd.clone().unwrap_or_default(),
             cwd_gone: s
@@ -1658,10 +2061,22 @@ mod tests {
             ),
         ] {
             let html = SessionTpl {
+                session_id: "summary-example".into(),
+                session_enc: "summary-example".into(),
                 title: "Summary example".into(),
                 agent: "claude".into(),
                 summary: Some(summary_html(summary, &[])),
                 summary_note: None,
+                can_summarize: false,
+                summarize_poll: false,
+                summarize_busy: false,
+                summarize_label: "Regenerate",
+                summarize_err: None,
+                oob_title: None,
+                reindex_poll: false,
+                reindex_busy: false,
+                reindex_label: "Re-index",
+                reindex_err: None,
                 chips: vec![],
                 cwd: String::new(),
                 cwd_gone: false,
@@ -1773,5 +2188,523 @@ mod tests {
             p.url("/", Some(("repo", "github.com/a/b"))),
             "/?q=flaky+test&agent=codex&repo=github.com%2Fa%2Fb"
         );
+    }
+
+    #[tokio::test]
+    async fn session_page_on_demand_summarize_and_reindex_queue_flow() {
+        use axum::body::{Body, to_bytes};
+        use axum::http::Request;
+        use axum::routing::post as ax_post;
+        use tower::ServiceExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let llm_addr = listener.local_addr().unwrap();
+        let llm_app = Router::new().route(
+            "/chat/completions",
+            ax_post(|| async {
+                axum::Json(serde_json::json!({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": serde_json::json!({
+                                "title": "Fresh generated title",
+                                "summary": "- Generated from web UI.",
+                                "kind": "feature",
+                                "outcome": "shipped",
+                                "tags": ["ui"]
+                            }).to_string()
+                        }
+                    }],
+                    "usage": {"completion_tokens": 20}
+                }))
+            }),
+        );
+        let llm_server = tokio::spawn(async move {
+            let _ = axum::serve(listener, llm_app).await;
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("claude/projects/repo");
+        std::fs::create_dir_all(&project).unwrap();
+        let line = |sid: &str, agent: Option<&str>, text: &str| {
+            let mut v = serde_json::json!({
+                "type": "user", "sessionId": sid, "cwd": "/work/repo",
+                "timestamp": "2026-01-01T00:00:00Z", "message": {"role": "user", "content": text},
+            });
+            if let Some(a) = agent {
+                v["agentId"] = a.into();
+            }
+            v.to_string()
+        };
+        let main_path = project.join("s1.jsonl");
+        std::fs::write(
+            &main_path,
+            format!("{}\n", line("s1", None, "first prompt")),
+        )
+        .unwrap();
+        let sub_dir = project.join("s1/subagents");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(
+            sub_dir.join("agent-a1.jsonl"),
+            format!("{}\n", line("s1", Some("a1"), "subagent prompt")),
+        )
+        .unwrap();
+
+        let mut cfg = crate::config::Config::default();
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.search.vectors = false;
+        cfg.search.rerank = false;
+        cfg.llm.enabled = true;
+        cfg.llm.summaries = true;
+        cfg.llm.api_key_env = "HOME".into();
+        cfg.llm.base_url = format!("http://{llm_addr}");
+        let engine = Arc::new(Engine::open_in(cfg, &dir.path().join("data")).unwrap());
+        engine.refresh_with(false, false).unwrap();
+        let app = router(engine.clone());
+
+        let send = |req: Request<Body>| {
+            let app = app.clone();
+            async move {
+                let resp = app.oneshot(req).await.unwrap();
+                let status = resp.status();
+                let headers = resp.headers().clone();
+                let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+                (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
+            }
+        };
+
+        // Session page shows both Re-index and Summarize for top-level sessions.
+        let (status, _, body) = send(Request::get("/s/s1").body(Body::empty()).unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Re-index"), "{body}");
+        assert!(body.contains(">Summarize</button>"), "{body}");
+
+        // Subagent page shows Re-index (with slash in ID) but not Summarize.
+        let (status, _, body) =
+            send(Request::get("/s/s1/agent-a1").body(Body::empty()).unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Re-index"), "{body}");
+        assert!(!body.contains("/session/summarize"), "{body}");
+
+        // Cross-site POSTs are rejected.
+        let (status, _, _) = send(
+            Request::post("/session/summarize")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::from("session=s1"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _, _) = send(
+            Request::post("/session/reindex")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header(header::HOST, "127.0.0.1:7777")
+                .header(header::ORIGIN, "https://evil.example")
+                .body(Body::from("session=s1"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        // Subagent summarize request is rejected.
+        let (status, _, _) = send(
+            Request::post("/session/summarize")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from("session=s1%2Fagent-a1"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Enqueue summarize via POST -> queued polling fragment.
+        let (status, _, body) = send(
+            Request::post("/session/summarize")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("sec-fetch-site", "same-origin")
+                .header(header::HOST, "127.0.0.1:7777")
+                .header(header::ORIGIN, "http://127.0.0.1:7777")
+                .body(Body::from("session=s1"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Queued…"), "{body}");
+        assert!(
+            body.contains("hx-get=\"/session/summarize?session=s1\""),
+            "{body}"
+        );
+
+        // Drain queue on a blocking thread just as daemon::run does.
+        let e2 = engine.clone();
+        let ran = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            crate::daemon::drain_tasks(&e2, &rt)
+        })
+        .await
+        .unwrap();
+        assert_eq!(ran, 1);
+
+        // Status poll returns the new summary, Regenerate button, no polling, and OOB title.
+        let (status, _, body) = send(
+            Request::get("/session/summarize?session=s1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Generated from web UI."), "{body}");
+        assert!(body.contains(">Regenerate</button>"), "{body}");
+        assert!(!body.contains("hx-trigger="), "{body}");
+        assert!(
+            body.contains(
+                "<h1 id=\"session-title\" hx-swap-oob=\"true\">Fresh generated title</h1>"
+            ),
+            "{body}"
+        );
+
+        // Grow session file, enqueue reindex, drain, and check HX-Refresh.
+        std::fs::write(
+            &main_path,
+            format!(
+                "{}\n{}\n",
+                line("s1", None, "first prompt"),
+                line("s1", None, "second prompt")
+            ),
+        )
+        .unwrap();
+        let (status, _, body) = send(
+            Request::post("/session/reindex")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from("session=s1"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Queued…"), "{body}");
+        assert!(
+            body.contains("hx-get=\"/session/reindex?session=s1\""),
+            "{body}"
+        );
+
+        let e2 = engine.clone();
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            crate::daemon::drain_tasks(&e2, &rt)
+        })
+        .await
+        .unwrap();
+
+        let (status, headers, body) = send(
+            Request::get("/session/reindex?session=s1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            headers.get("HX-Refresh").and_then(|v| v.to_str().ok()),
+            Some("true")
+        );
+        assert!(!body.contains("hx-trigger="), "{body}");
+        assert_eq!(engine.catalog().sessions["s1"].turn_count, 2);
+
+        // Subagent reindex with slash works end-to-end.
+        let (status, _, _) = send(
+            Request::post("/session/reindex")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from("session=s1%2Fagent-a1"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Failing LLM call surfaces error in the summary fragment.
+        llm_server.abort();
+        let _ = send(
+            Request::post("/session/summarize")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from("session=s1"))
+                .unwrap(),
+        )
+        .await;
+        let e2 = engine.clone();
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            crate::daemon::drain_tasks(&e2, &rt)
+        })
+        .await
+        .unwrap();
+        let (status, _, body) = send(
+            Request::get("/session/summarize?session=s1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("class=\"task-err\""), "{body}");
+        assert!(!body.contains("hx-trigger="), "{body}");
+    }
+
+    #[tokio::test]
+    async fn homepage_reindex_all_and_summarize_all_queue_flow() {
+        use axum::body::{Body, to_bytes};
+        use axum::http::Request;
+        use axum::routing::post as ax_post;
+        use tower::ServiceExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let llm_addr = listener.local_addr().unwrap();
+        let llm_app = Router::new().route(
+            "/chat/completions",
+            ax_post(|| async {
+                axum::Json(serde_json::json!({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": serde_json::json!({
+                                "title": "Batch summarized title",
+                                "summary": "- Summarized via Summarize all.",
+                                "kind": "feature",
+                                "outcome": "shipped",
+                                "tags": ["batch"]
+                            }).to_string()
+                        }
+                    }],
+                    "usage": {"completion_tokens": 20}
+                }))
+            }),
+        );
+        let llm_server = tokio::spawn(async move {
+            let _ = axum::serve(listener, llm_app).await;
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("claude/projects/repo");
+        std::fs::create_dir_all(&project).unwrap();
+        let line = |sid: &str, text: &str| {
+            serde_json::json!({
+                "type": "user", "sessionId": sid, "cwd": "/work/repo",
+                "timestamp": "2026-01-01T00:00:00Z", "message": {"role": "user", "content": text},
+            })
+            .to_string()
+        };
+        std::fs::write(project.join("s1.jsonl"), format!("{}\n", line("s1", "one"))).unwrap();
+
+        let mut cfg = crate::config::Config::default();
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.search.vectors = false;
+        cfg.search.rerank = false;
+        cfg.llm.enabled = true;
+        cfg.llm.summaries = true;
+        cfg.llm.api_key_env = "HOME".into();
+        cfg.llm.base_url = format!("http://{llm_addr}");
+        let engine = Arc::new(Engine::open_in(cfg, &dir.path().join("data")).unwrap());
+        engine.refresh_with(false, false).unwrap();
+        let app = router(engine.clone());
+
+        let send = |req: Request<Body>| {
+            let app = app.clone();
+            async move {
+                let resp = app.oneshot(req).await.unwrap();
+                let status = resp.status();
+                let headers = resp.headers().clone();
+                let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+                (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
+            }
+        };
+
+        // Homepage renders both Re-index all and Summarize all buttons.
+        let (status, _, body) = send(Request::get("/").body(Body::empty()).unwrap()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(">Re-index all</button>"), "{body}");
+        assert!(body.contains(">Summarize all</button>"), "{body}");
+
+        // Cross-site POSTs are rejected.
+        for path in [
+            "/tasks/reindex",
+            "/tasks/summarize",
+            "/tasks/summarize/cancel",
+        ] {
+            let (status, _, _) = send(
+                Request::post(path)
+                    .header("sec-fetch-site", "cross-site")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
+        }
+
+        // Add a second session on disk, click Re-index all, drain, and verify poll response.
+        std::fs::write(project.join("s2.jsonl"), format!("{}\n", line("s2", "two"))).unwrap();
+        let (status, _, body) = send(
+            Request::post("/tasks/reindex")
+                .header("sec-fetch-site", "same-origin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Queued…"), "{body}");
+        assert!(body.contains("hx-get=\"/tasks/all?since=0\""), "{body}");
+
+        let e2 = engine.clone();
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            crate::daemon::drain_tasks(&e2, &rt)
+        })
+        .await
+        .unwrap();
+
+        let (status, headers, body) = send(
+            Request::get("/tasks/all?since=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            headers.get("HX-Trigger").and_then(|v| v.to_str().ok()),
+            Some("tasks-updated")
+        );
+        assert!(body.contains("Re-indexed 2 sessions"), "{body}");
+        assert!(
+            body.contains("<span id=\"session-count\" hx-swap-oob=\"true\">2</span>"),
+            "{body}"
+        );
+        assert!(!body.contains("hx-trigger="), "{body}");
+
+        // Cancel a queued Summarize all immediately.
+        let (status, _, body) = send(
+            Request::post("/tasks/summarize")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(">Cancel</button>"), "{body}");
+        let (status, _, body) = send(
+            Request::post("/tasks/summarize/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Cancelled"), "{body}");
+        assert!(!body.contains("hx-trigger="), "{body}");
+
+        // Enqueue Summarize all, drain, and check summaries + completion note.
+        let seq = engine.tasks.completed_seq();
+        let (status, _, _) = send(
+            Request::post("/tasks/summarize")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let e2 = engine.clone();
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            crate::daemon::drain_tasks(&e2, &rt)
+        })
+        .await
+        .unwrap();
+
+        let (status, headers, body) = send(
+            Request::get(format!("/tasks/all?since={seq}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            headers.get("HX-Trigger").and_then(|v| v.to_str().ok()),
+            Some("tasks-updated")
+        );
+        assert!(body.contains("Summarized 2 sessions"), "{body}");
+        let cat = engine.catalog();
+        assert_eq!(cat.sessions["s1"].title, "Batch summarized title");
+        assert_eq!(cat.sessions["s2"].title, "Batch summarized title");
+
+        // Second Summarize all sees nothing left to summarize.
+        let seq = engine.tasks.completed_seq();
+        let _ = send(
+            Request::post("/tasks/summarize")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        let e2 = engine.clone();
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            crate::daemon::drain_tasks(&e2, &rt)
+        })
+        .await
+        .unwrap();
+        let (status, _, body) = send(
+            Request::get(format!("/tasks/all?since={seq}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("All sessions up to date"), "{body}");
+
+        // Failing Summarize all surfaces the API error.
+        llm_server.abort();
+        engine
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE sessions SET summary = NULL, summary_turns = NULL WHERE id = 's1'",
+                [],
+            )
+            .unwrap();
+        let seq = engine.tasks.completed_seq();
+        let _ = send(
+            Request::post("/tasks/summarize")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        let e2 = engine.clone();
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            crate::daemon::drain_tasks(&e2, &rt)
+        })
+        .await
+        .unwrap();
+        let (status, _, body) = send(
+            Request::get(format!("/tasks/all?since={seq}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("class=\"task-err-inline\""), "{body}");
     }
 }

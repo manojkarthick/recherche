@@ -1,0 +1,7 @@
+<span class="reindex-ctrl" id="session-reindex"{% if reindex_poll %} hx-get="/session/reindex?session={{ session_enc }}" hx-trigger="every 750ms" hx-swap="outerHTML"{% endif %}>
+  <form class="task-form" hx-post="/session/reindex" hx-target="#session-reindex" hx-swap="outerHTML">
+    <input type="hidden" name="session" value="{{ session_id }}">
+    <button type="submit" class="btn task-btn reindex-btn{% if reindex_busy %} busy{% endif %}"{% if reindex_busy %} disabled{% endif %} title="Reparse this session from disk and refresh its search entry">{{ reindex_label }}</button>
+  </form>
+  {% if let Some(err) = reindex_err %}<span class="task-err-inline" role="alert" title="{{ err }}">{{ err }}</span>{% endif %}
+</span>
