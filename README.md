@@ -130,7 +130,7 @@ the default configuration also enables two optional API features:
 | Feature | Data sent to the configured API |
 | --- | --- |
 | Query expansion | Your query and a list of known repository names |
-| Session summaries | A capped digest containing prompts, metadata, selected errors, and the final reply |
+| Session summaries | A capped digest containing prompts, metadata, selected errors and test-result lines, and the final reply |
 
 The default API is OpenRouter. Query expansion can run automatically for
 sentence-like browser searches with weak results; CLI searches require

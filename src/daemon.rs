@@ -100,7 +100,13 @@ pub fn run(e: Arc<Engine>) {
                             tracing::warn!("index pass failed: {err:#}");
                         }
                     }
-                    Err(err) => tracing::warn!("summaries failed: {err:#}"),
+                    Err(err) => {
+                        // Earlier summaries may have been saved before this failure.
+                        if let Err(index_err) = e.index_dirty(false) {
+                            tracing::warn!("index pass failed: {index_err:#}");
+                        }
+                        tracing::warn!("summaries failed: {err:#}");
+                    }
                 }
                 drain_tasks(&e, &rt);
             }
