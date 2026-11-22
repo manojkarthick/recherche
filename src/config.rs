@@ -193,6 +193,57 @@ pub fn config_dir() -> PathBuf {
     xdg("XDG_CONFIG_HOME", ".config").join("recherche")
 }
 
+pub fn env_file() -> PathBuf {
+    config_dir().join(".env")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnvFileStatus {
+    Missing,
+    Loaded(PathBuf),
+    Warning(String),
+}
+
+/// Loads `KEY=VALUE` pairs from `path` into the process environment without
+/// overwriting variables that are already set. Refuses files accessible by
+/// group or others on Unix. Must be called before spawning threads.
+pub fn load_env_file(path: &Path) -> EnvFileStatus {
+    match check_env_file(path) {
+        Ok(false) => return EnvFileStatus::Missing,
+        Ok(true) => {}
+        Err(msg) => return EnvFileStatus::Warning(msg),
+    }
+    match dotenvy::from_path(path) {
+        Ok(()) => EnvFileStatus::Loaded(path.to_path_buf()),
+        Err(e) => EnvFileStatus::Warning(format!("loading {}: {e}", path.display())),
+    }
+}
+
+fn check_env_file(path: &Path) -> Result<bool, String> {
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    if meta.is_dir() {
+        return Err(format!("{} is a directory", path.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perm = meta.permissions().mode() & 0o777;
+        if perm & 0o077 != 0 {
+            let quoted = crate::util::shell_quote(&path.to_string_lossy());
+            return Err(format!(
+                "{} is accessible by group or others (mode {:04o}); run `chmod 600 {quoted}`",
+                path.display(),
+                perm
+            ));
+        }
+    }
+    Ok(true)
+}
+
 pub fn data_dir() -> PathBuf {
     std::env::var_os("RECHERCHE_DATA_DIR")
         .map(PathBuf::from)
@@ -240,5 +291,71 @@ impl Config {
         self.listen.starts_with("127.")
             || self.listen.starts_with("localhost")
             || self.listen.starts_with("[::1]")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    fn write_env(dir: &Path, name: &str, contents: &str, mode: u32) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, contents).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        path
+    }
+
+    #[test]
+    fn missing_env_file_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            load_env_file(&dir.path().join(".env")),
+            EnvFileStatus::Missing
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_file_rejects_group_or_world_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, mode) in [("e644", 0o644), ("e640", 0o640), ("e604", 0o604)] {
+            let path = write_env(dir.path(), name, "RECHERCHE_TEST_UNSAFE=1\n", mode);
+            match load_env_file(&path) {
+                EnvFileStatus::Warning(msg) => {
+                    assert!(msg.contains("chmod 600"), "unexpected warning: {msg}");
+                }
+                other => panic!("expected warning for mode {mode:o}, got {other:?}"),
+            }
+            assert!(std::env::var_os("RECHERCHE_TEST_UNSAFE").is_none());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_file_loads_600_and_preserves_existing_vars() {
+        let dir = tempfile::tempdir().unwrap();
+        let orig_home = std::env::var("HOME").unwrap();
+        let path = write_env(
+            dir.path(),
+            ".env",
+            "HOME=/should/not/overwrite\nRECHERCHE_TEST_DOTENV_KEY=sk-test-123\n",
+            0o600,
+        );
+        assert_eq!(load_env_file(&path), EnvFileStatus::Loaded(path));
+        assert_eq!(std::env::var("HOME").unwrap(), orig_home);
+        assert_eq!(
+            std::env::var("RECHERCHE_TEST_DOTENV_KEY").unwrap(),
+            "sk-test-123"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_file_reports_syntax_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_env(dir.path(), ".env", "NOT VALID LINE\n", 0o600);
+        assert!(matches!(load_env_file(&path), EnvFileStatus::Warning(_)));
     }
 }

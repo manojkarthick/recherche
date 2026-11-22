@@ -12,6 +12,7 @@ askama = "0.16"
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6", features = ["derive"] }
+dotenvy = "0.15"
 # Defaults add image models and native-tls downloads, neither of which is used.
 fastembed = { version = "7.7", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls"] }
 gethostname = "1"

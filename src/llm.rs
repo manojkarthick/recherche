@@ -109,11 +109,16 @@ impl Llm {
     fn key(&self) -> Option<String> {
         std::env::var(&self.cfg.api_key_env)
             .ok()
+            .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty())
     }
 
+    pub fn has_key(&self) -> bool {
+        self.key().is_some()
+    }
+
     pub fn available(&self) -> bool {
-        self.cfg.enabled && self.key().is_some()
+        self.cfg.enabled && self.has_key()
     }
 
     pub fn rewrite_enabled(&self) -> bool {

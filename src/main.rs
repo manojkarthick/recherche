@@ -156,6 +156,14 @@ fn default_log_filter(cmd: &Cmd) -> &'static str {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Load `~/.config/recherche/.env` before initializing logging or spawning threads
+    // so background services (`brew services`, `launchd`, `systemd`) pick up
+    // `OPENROUTER_API_KEY`, `RECHERCHE_LOG`, etc. Never touch it for `demo`.
+    let env_status = if matches!(cli.cmd, Cmd::Demo { .. }) {
+        config::EnvFileStatus::Missing
+    } else {
+        config::load_env_file(&config::env_file())
+    };
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("RECHERCHE_LOG")
@@ -165,6 +173,9 @@ fn main() -> Result<()> {
         // Services send stderr to a log file, where colour codes are noise.
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .init();
+    if let config::EnvFileStatus::Warning(msg) = &env_status {
+        tracing::warn!("{msg}");
+    }
     let cfg = config::Config::load(cli.config.as_deref())?;
     match cli.cmd {
         Cmd::Index { rebuild } => {
@@ -307,9 +318,16 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             if !engine.llm.summaries_enabled() {
+                if !engine.cfg.llm.enabled {
+                    bail!("summaries are off: llm.enabled is false");
+                }
+                if !engine.cfg.llm.summaries {
+                    bail!("summaries are off: llm.summaries is false");
+                }
                 bail!(
-                    "summaries are off: set {} and keep llm.summaries = true",
-                    engine.cfg.llm.api_key_env
+                    "summaries are off: set {} (or add it to {}) and keep llm.summaries = true",
+                    engine.cfg.llm.api_key_env,
+                    config::env_file().display()
                 );
             }
             let done = rt.block_on(summarize::run(
@@ -341,7 +359,7 @@ fn main() -> Result<()> {
             )?;
         }
         Cmd::InstallService => install_service()?,
-        Cmd::Doctor => doctor(cfg)?,
+        Cmd::Doctor => doctor(cfg, &env_status)?,
         Cmd::Demo { dir, listen } => {
             let mut cfg = cfg;
             cfg.listen = listen;
@@ -485,18 +503,26 @@ fn install_service() -> Result<()> {
         );
     }
     println!(
-        "The service does not inherit your shell environment, so OPENROUTER_API_KEY is not set there. For LLM features, add it to the service's environment."
+        "The service does not inherit your shell environment. For LLM features, put OPENROUTER_API_KEY in {} (chmod 600).",
+        config::env_file().display()
     );
     Ok(())
 }
 
-fn doctor(cfg: config::Config) -> Result<()> {
+fn doctor(cfg: config::Config, env_status: &config::EnvFileStatus) -> Result<()> {
     let engine = search::Engine::open(cfg)?;
     let c = engine.conn()?;
     println!(
         "config       {}",
         config::config_dir().join("config.toml").display()
     );
+    match env_status {
+        config::EnvFileStatus::Loaded(p) => println!("env          {} (loaded)", p.display()),
+        config::EnvFileStatus::Missing => {
+            println!("env          {} (not found)", config::env_file().display())
+        }
+        config::EnvFileStatus::Warning(msg) => println!("env          skipped ({msg})"),
+    }
     println!("data         {}", config::data_dir().display());
     println!("claude       {}", engine.cfg.claude_dir().display());
     println!("codex        {}", engine.cfg.codex_dir().display());
@@ -529,12 +555,16 @@ fn doctor(cfg: config::Config) -> Result<()> {
         engine.lex.num_docs(),
         engine.vecs.read().unwrap().len()
     );
-    let key = std::env::var(&engine.cfg.llm.api_key_env).is_ok();
+    let llm_detail = if !engine.cfg.llm.enabled {
+        "disabled in config".to_string()
+    } else if engine.llm.has_key() {
+        format!("{} set", engine.cfg.llm.api_key_env)
+    } else {
+        format!("{} not set", engine.cfg.llm.api_key_env)
+    };
     println!(
-        "llm          {} ({} {})",
+        "llm          {} ({llm_detail})",
         if engine.llm.available() { "on" } else { "off" },
-        engine.cfg.llm.api_key_env,
-        if key { "set" } else { "not set" },
     );
     Ok(())
 }
