@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/manojkarthick/recherche/compare/v0.3.0...v0.4.0) (2026-11-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** skip headless claude -p and codex exec sessions ([#34](https://github.com/manojkarthick/recherche/issues/34))
+
+### Features
+
+* **config:** load service credentials from a protected env file ([#38](https://github.com/manojkarthick/recherche/issues/38)) ([5b2dbde](https://github.com/manojkarthick/recherche/commit/5b2dbde4cc96f97d30c7f0805db042fc1b6faf29))
+* **config:** skip headless claude -p and codex exec sessions ([#34](https://github.com/manojkarthick/recherche/issues/34)) ([a4c4a1a](https://github.com/manojkarthick/recherche/commit/a4c4a1a970990518d19cf2b537c2526cf11833af))
+* **ingest:** read Codex sessions compressed to .jsonl.zst ([#36](https://github.com/manojkarthick/recherche/issues/36)) ([c478e73](https://github.com/manojkarthick/recherche/commit/c478e73a75a9f4f57bbbcc20dfe2ec332cb30650))
+* **web:** add on-demand session reindexing and summaries ([#37](https://github.com/manojkarthick/recherche/issues/37)) ([b482dc4](https://github.com/manojkarthick/recherche/commit/b482dc4e3d838b57c8228f43455eac562019b4d8))
+
+
+### Bug Fixes
+
+* correct semantic search and summarization failures ([#39](https://github.com/manojkarthick/recherche/issues/39)) ([2b11dec](https://github.com/manojkarthick/recherche/commit/2b11decdf894007190c901e0131aafa4ec3b75aa))
+
 ## [0.3.0](https://github.com/manojkarthick/recherche/compare/v0.2.0...v0.3.0) (2026-11-20)
 
 
