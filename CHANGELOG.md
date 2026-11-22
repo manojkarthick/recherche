@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/manojkarthick/recherche/compare/v0.4.0...v0.5.0) (2026-11-22)
+
+
+### Features
+
+* index Antigravity sessions ([#42](https://github.com/manojkarthick/recherche/issues/42)) ([2c2a3b6](https://github.com/manojkarthick/recherche/commit/2c2a3b640ca988495e84dc9ed965f81c9ac1bb92))
+
+
+### Bug Fixes
+
+* **web:** give the session page buttons one size and one right edge ([#40](https://github.com/manojkarthick/recherche/issues/40)) ([338d028](https://github.com/manojkarthick/recherche/commit/338d0283039e5b0802d7691a64e588de3f19a597))
+
 ## [0.4.0](https://github.com/manojkarthick/recherche/compare/v0.3.0...v0.4.0) (2026-11-22)
 
 
