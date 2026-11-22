@@ -64,7 +64,7 @@
         <code class="rcmd">{{ resume_cmd }}</code>
         {% if !cwd.is_empty() %}<span class="rdir" title="Working directory">{{ crate::web::wbr(cwd)|safe }}</span>{% endif %}
       </div>
-      <button type="button" class="cc" data-copy="{{ resume }}" title="Copy resume command (c)"><span class="lbl">Copy resume command</span></button>
+      <button type="button" class="cc" data-copy="{{ resume }}" title="Copy resume command (c)"><span class="lbl">Resume</span></button>
     </div>
     {% if cwd_gone %}<p class="warn">This directory no longer exists. Recreate it before resuming; the resume command will fail without it.</p>{% endif %}
     {% if summary.is_some() || summary_note.is_some() %}

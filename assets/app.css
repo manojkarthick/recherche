@@ -459,6 +459,11 @@ kbd:first-child, kbd + kbd { margin-left: 0; }
 .egroup .ext { flex: none; height: 18px; }
 
 .transcript { min-width: 0; }
+/* Re-index, Copy and Regenerate share one size and one right edge. The edge is
+   the copy button's, which sits inside the resume box (8px padding + 1px border). */
+.rh { --act-inset: 9px; }
+/* Wide enough for "Regenerate"; a busy label like "Summarizing…" may grow past it. */
+.rh .task-btn, .rh .cc { height: 28px; min-width: 116px; justify-content: center; padding: 0 10px; font-size: 12.5px; }
 .rh { display: flex; flex-direction: column; gap: 14px; padding-bottom: 26px; border-bottom: 1px solid var(--rule); }
 .rh-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; font-size: 13.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .rh-model { font: 12.5px/1.4 var(--mono); color: var(--faint); }
@@ -480,17 +485,17 @@ kbd:first-child, kbd + kbd { margin-left: 0; }
 .rs-prompt { font: 13.5px/1.5 var(--mono); color: var(--faint); user-select: none; }
 .rcmd { font: 500 13.5px/1.5 var(--mono); color: var(--ink); overflow-wrap: anywhere; }
 .rdir { font: 12.5px/1.5 var(--mono); color: var(--faint); overflow-wrap: anywhere; }
-.cc { flex-shrink: 0; height: 30px; padding: 0 12px; }
+.cc { flex-shrink: 0; }
 .warn { margin: 0; color: var(--warn); font-size: 14px; }
 
 .summary h2 { font: 600 13px/1.2 var(--sans); color: var(--ink); margin: 0; }
-.sum-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 6px; max-width: 74ch; }
-.nosum-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 6px; max-width: 74ch; }
+.sum-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px var(--act-inset) 6px 0; }
+.nosum-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px var(--act-inset) 0 0; }
 .gen { font-weight: 400; color: var(--faint); margin-left: 6px; }
 .nosum { margin: 0; font-size: 14px; color: var(--faint); max-width: 74ch; }
 .ssum { font-size: 15px; line-height: 1.6; color: var(--muted); max-width: 74ch; }
 
-.reindex-ctrl { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.reindex-ctrl { margin: 0 var(--act-inset) 0 auto; display: inline-flex; align-items: center; gap: 8px; }
 .task-form { display: inline-flex; margin: 0; }
 .task-btn { height: 24px; padding: 0 8px; font-size: 12px; }
 .task-btn:disabled { cursor: default; opacity: 0.85; color: var(--muted); border-color: var(--rule-strong); }
@@ -683,6 +688,7 @@ kbd:first-child, kbd + kbd { margin-left: 0; }
   .index { order: 2; position: static; max-height: none; }
   .rs { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
   .cc { align-self: flex-start; }
+  .rh { --act-inset: 0px; }
   .reindex-ctrl { margin-left: 0; }
   .nosum-row { flex-direction: column; align-items: flex-start; }
   .turn-index { display: none; }
