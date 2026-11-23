@@ -106,6 +106,7 @@ async fn asset(AxPath(path): AxPath<String>) -> Response {
                 Some("js") => "text/javascript",
                 Some("css") => "text/css",
                 Some("svg") => "image/svg+xml",
+                Some("woff2") => "font/woff2",
                 _ => "application/octet-stream",
             };
             (
