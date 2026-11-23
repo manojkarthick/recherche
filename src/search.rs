@@ -85,7 +85,7 @@ impl Engine {
         let db = data.join("recherche.db");
         let conn = store::open(&db)?;
         let lex = Lexical::open(&data.join("tantivy"))?;
-        let catalog = Catalog::load(&conn)?;
+        let catalog = Catalog::load(&conn, cfg.ui.hide_system_instructions)?;
         let vecs = VecStore::load(&conn)?;
         Ok(Self {
             tickets: crate::extract::compile(&cfg.ticket_patterns),
@@ -157,7 +157,8 @@ impl Engine {
         // Another process can finish indexing and clear dirty flags before this
         // pass. Reload readers even when we did not index anything ourselves.
         self.lex.reload()?;
-        *self.catalog.write().unwrap() = Arc::new(Catalog::load(c)?);
+        *self.catalog.write().unwrap() =
+            Arc::new(Catalog::load(c, self.cfg.ui.hide_system_instructions)?);
         if self.cfg.search.vectors {
             if embed && let Err(e) = crate::models::embed_missing(&self.models, c) {
                 tracing::warn!("embedding failed, semantic search is limited: {e:#}");

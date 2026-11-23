@@ -1,0 +1,21 @@
+# A prompt that a harness prefixed with <system_instruction> blocks. They show
+# unless `ui.hide_system_instructions` is set. No generated title, so the
+# title comes from the prompt.
+agent = "claude"
+cwd = "code/widgets"
+branch = "docs/csv-columns"
+ago = "3d2h"
+
+[[turns]]
+prompt = '''
+<system_instruction>
+You are working inside a desktop app that runs several coding agents in parallel.
+Save screenshots under `.context/` and link them in your reply.
+</system_instruction>
+
+<system_instruction>
+The target branch for this workspace is origin/main.
+</system_instruction>
+
+Can you list the CSV export columns in the README?'''
+reply = "Added a table of the eleven export columns to the README, in the order the exporter writes them."
