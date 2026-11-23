@@ -73,7 +73,7 @@ Returned by session details and entity lookups.
 | `host` | string | Recorded hostname; empty if unknown |
 | `cwd` | string or null | Session working directory |
 | `title` | string | Effective title (generated title when present) |
-| `original_title` | string or null | Source title |
+| `original_title` | string or null | Source title, after `ui.hide_system_instructions` |
 | `generated_title` | string or null | LLM-generated title |
 | `title_is_prompt` | boolean | Whether the source title came from prompt text |
 | `recap` | string or null | Agent's latest recap |
@@ -168,7 +168,7 @@ session's turn count. A missing session returns `404`.
 | `index` | integer | Zero-based turn index |
 | `timestamp` | integer or null | Turn time |
 | `branch`, `cwd` | string or null | Branch and directory for this turn |
-| `user`, `assistant` | string | Prompt and reply text |
+| `user`, `assistant` | string | Prompt and reply text; `user` follows `ui.hide_system_instructions` |
 | `tool_text` | string | Tool names, inputs and outputs, concatenated |
 | `files`, `commands`, `errors` | string | Newline-joined lists |
 | `tools` | object array | `{name, input, output, error}` per tool call |

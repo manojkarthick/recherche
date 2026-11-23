@@ -75,6 +75,20 @@ are always kept. Set a list to `[]` to index everything.
 The lists apply when a session file is parsed. After changing them, run
 `recherche index --rebuild` so already indexed sessions are re-evaluated.
 
+### System instructions in prompts
+
+Some harnesses, such as Conductor, prepend `<system_instruction>` blocks to
+the prompts they send. To hide them in the web UI and the JSON API, including
+titles taken from such a prompt:
+
+```toml
+[ui]
+hide_system_instructions = true
+```
+
+It is off by default. Only what the UI and API return changes: the blocks stay
+in the index and in summaries, and no rebuild is needed.
+
 ## Local search models
 
 The default search settings enable both semantic retrieval and reranking:

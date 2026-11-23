@@ -21,6 +21,7 @@ pub struct Config {
     pub worktree_patterns: Vec<String>,
     pub llm: Llm,
     pub search: Search,
+    pub ui: Ui,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -97,6 +98,15 @@ pub struct Search {
     pub boilerplate_min_sessions: i64,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Ui {
+    /// Hide `<system_instruction>` blocks that harnesses such as Conductor
+    /// prepend to prompts, and from titles taken from such a prompt, in the
+    /// web UI and the API. The text stays indexed and searchable.
+    pub hide_system_instructions: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -121,6 +131,7 @@ impl Default for Config {
             ],
             llm: Llm::default(),
             search: Search::default(),
+            ui: Ui::default(),
         }
     }
 }

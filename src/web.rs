@@ -701,6 +701,16 @@ fn blurb_html(text: &str, terms: &[String], budget: usize) -> String {
     summary_html(&kept.join("\n"), terms)
 }
 
+/// The user's prompt as shown, without `<system_instruction>` blocks when
+/// `ui.hide_system_instructions` is set.
+fn shown_prompt<'a>(e: &Engine, text: &'a str) -> std::borrow::Cow<'a, str> {
+    if e.cfg.ui.hide_system_instructions {
+        crate::util::strip_system_instructions(text)
+    } else {
+        text.into()
+    }
+}
+
 fn result_view(
     e: &Engine,
     cat: &Catalog,
@@ -715,7 +725,8 @@ fn result_view(
         let Some((_, user, assistant)) = texts.get(t) else {
             continue;
         };
-        let (u, uh) = highlight(&plain_excerpt(user), terms, Some(220));
+        let user = shown_prompt(e, user);
+        let (u, uh) = highlight(&plain_excerpt(&user), terms, Some(220));
         let (a, ah) = highlight(&plain_excerpt(assistant), terms, Some(220));
         let html = if uh >= ah && !user.is_empty() {
             format!("<span class=\"who\">You</span> {}", code_spans(&u))
@@ -1636,7 +1647,8 @@ async fn session_page(
         let mut last_day = fmt_day(s.started);
         let mut last_branch: Option<String> = None;
         for t in crate::store::turns(&c, &id)? {
-            let (user, uh) = markdown(&t.user_text, &terms);
+            let user_text = shown_prompt(&e, &t.user_text);
+            let (user, uh) = markdown(&user_text, &terms);
             let (assistant, ah) = markdown(&t.assistant_text, &terms);
             let tools: Vec<ToolView> =
                 serde_json::from_str::<Vec<serde_json::Value>>(&t.tools_json)
@@ -1649,10 +1661,10 @@ async fn session_page(
                         error: v["error"].as_bool().unwrap_or(false),
                     })
                     .collect();
-            let label = if !t.user_text.trim().is_empty() {
-                &t.user_text
+            let label = if !user_text.trim().is_empty() {
+                user_text.as_ref()
             } else {
-                &t.assistant_text
+                t.assistant_text.as_str()
             };
             let day = t.ts.map(fmt_day).filter(|d| *d != last_day);
             if let Some(d) = &day {
@@ -2062,6 +2074,20 @@ mod tests {
         );
         assert!(html.contains("href=\"https://example.com\""), "{html}");
         assert!(html.contains("href=\"mailto:hello@example.com\""), "{html}");
+    }
+
+    #[test]
+    fn system_instructions_hide_only_when_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::Config::default();
+        cfg.llm.enabled = false;
+        cfg.search.vectors = false;
+        cfg.search.rerank = false;
+        let mut engine = Engine::open_in(cfg, dir.path()).unwrap();
+        let text = "<system_instruction>\nbe brief\n</system_instruction>\n\n<system_instruction>x</system_instruction>\nfix the test";
+        assert_eq!(shown_prompt(&engine, text), text);
+        engine.cfg.ui.hide_system_instructions = true;
+        assert_eq!(shown_prompt(&engine, text), "fix the test");
     }
 
     #[test]

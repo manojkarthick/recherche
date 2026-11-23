@@ -1,5 +1,8 @@
 use chrono::{Local, TimeZone};
+use regex::Regex;
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
+use std::sync::LazyLock;
 
 pub fn hash(parts: &[&str]) -> String {
     let mut h = Sha256::new();
@@ -140,6 +143,15 @@ pub fn count(n: usize, noun: &str) -> String {
     } else {
         format!("{n} {noun}s")
     }
+}
+
+/// Removes the `<system_instruction>` blocks that harnesses such as Conductor
+/// prepend to prompts.
+pub fn strip_system_instructions(text: &str) -> Cow<'_, str> {
+    static BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?s)<system_instruction>.*?</system_instruction>\s*").unwrap()
+    });
+    BLOCK.replace_all(text, "")
 }
 
 #[cfg(test)]

@@ -182,7 +182,9 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    pub fn load(c: &Connection) -> Result<Self> {
+    /// `hide_system_instructions` retitles sessions titled by a prompt that
+    /// starts with `<system_instruction>` blocks, from the text after them.
+    pub fn load(c: &Connection, hide_system_instructions: bool) -> Result<Self> {
         let mut cat = Catalog {
             auto_summary_since: get_meta(c, "auto_summary_since")?
                 .and_then(|v| v.parse().ok())
@@ -192,40 +194,50 @@ impl Catalog {
         let mut st = c.prepare(
             "SELECT id, source, parent_id, host, cwd,
                     COALESCE(llm_title, title, ''), recap, summary, kind, outcome, tags, model,
-                    COALESCE(started, 0), COALESCE(ended, 0), turn_count, repo_key, repo_origin
+                    COALESCE(started, 0), COALESCE(ended, 0), turn_count, repo_key, repo_origin,
+                    llm_title IS NULL AND title_is_prompt = 1
              FROM sessions WHERE skip = 0 AND turn_count > 0",
         )?;
         let rows = st.query_map([], |r| {
-            Ok(SessionMeta {
-                id: r.get(0)?,
-                source: r.get(1)?,
-                parent_id: r.get(2)?,
-                host: r.get(3)?,
-                cwd: r.get(4)?,
-                title: r.get(5)?,
-                recap: r.get(6)?,
-                summary: r.get(7)?,
-                kind: r.get(8)?,
-                outcome: r.get(9)?,
-                tags: r
-                    .get::<_, Option<String>>(10)?
-                    .map(|t| {
-                        t.split(',')
-                            .map(|x| x.trim().to_string())
-                            .filter(|x| !x.is_empty())
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                model: r.get(11)?,
-                started: r.get(12)?,
-                ended: r.get(13)?,
-                turn_count: r.get(14)?,
-                repo_key: r.get(15)?,
-                repo_origin: r.get(16)?,
-            })
+            Ok((
+                r.get::<_, bool>(17)?,
+                SessionMeta {
+                    id: r.get(0)?,
+                    source: r.get(1)?,
+                    parent_id: r.get(2)?,
+                    host: r.get(3)?,
+                    cwd: r.get(4)?,
+                    title: r.get(5)?,
+                    recap: r.get(6)?,
+                    summary: r.get(7)?,
+                    kind: r.get(8)?,
+                    outcome: r.get(9)?,
+                    tags: r
+                        .get::<_, Option<String>>(10)?
+                        .map(|t| {
+                            t.split(',')
+                                .map(|x| x.trim().to_string())
+                                .filter(|x| !x.is_empty())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    model: r.get(11)?,
+                    started: r.get(12)?,
+                    ended: r.get(13)?,
+                    turn_count: r.get(14)?,
+                    repo_key: r.get(15)?,
+                    repo_origin: r.get(16)?,
+                },
+            ))
         })?;
         for s in rows {
-            let s = s?;
+            let (prompt_title, mut s) = s?;
+            if hide_system_instructions
+                && prompt_title
+                && let Some(t) = title_without_system_instructions(c, &s.id, &s.title)?
+            {
+                s.title = t;
+            }
             if let Some(p) = &s.parent_id {
                 cat.children
                     .entry(p.clone())
@@ -382,6 +394,31 @@ pub fn turn_texts(c: &Connection, ids: &[i64]) -> Result<HashMap<i64, (i64, Stri
     Ok(out)
 }
 
+/// Ingest titles a session without a generated title from its first prompt's
+/// first line, which is the opening tag when a harness prepended
+/// `<system_instruction>` blocks. Returns the first line after the blocks for
+/// such a title, and `None` for any other.
+pub fn title_without_system_instructions(
+    c: &Connection,
+    session_id: &str,
+    title: &str,
+) -> Result<Option<String>> {
+    if !title.starts_with("<system_instruction>") {
+        return Ok(None);
+    }
+    let mut st = c.prepare_cached(
+        "SELECT user_text FROM turns WHERE session_id = ? AND user_text <> '' ORDER BY idx",
+    )?;
+    for t in st.query_map([session_id], |r| r.get::<_, String>(0))? {
+        let t = t?;
+        let rest = crate::util::strip_system_instructions(&t);
+        if let Some(line) = rest.lines().next().filter(|l| !l.trim().is_empty()) {
+            return Ok(Some(crate::model::clip_chars(line, 100)));
+        }
+    }
+    Ok(None)
+}
+
 pub fn get_meta(c: &Connection, key: &str) -> Result<Option<String>> {
     Ok(
         c.query_row("SELECT value FROM meta WHERE key = ?", [key], |r| r.get(0))
@@ -402,6 +439,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prompt_titles_skip_system_instructions_when_hidden() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute_batch(
+            "INSERT INTO sessions (id, source, host, archive_path, turn_count, title, title_is_prompt) VALUES
+             ('s', 'claude', '', '', 2, '<system_instruction>', 1);
+             INSERT INTO turns (session_id, idx, user_text, assistant_text, tool_text, files, commands, errors, tools_json, ukey, chash) VALUES
+             ('s', 0, '<system_instruction>only</system_instruction>', '', '', '', '', '', '[]', 'a', 'a'),
+             ('s', 1, '<system_instruction>\nbe brief\n</system_instruction>\n\nfix the test\nplease', '', '', '', '', '', '[]', 'b', 'b');",
+        )
+        .unwrap();
+        let title = |hide| Catalog::load(&c, hide).unwrap().sessions["s"].title.clone();
+        assert_eq!(title(false), "<system_instruction>");
+        assert_eq!(title(true), "fix the test");
+    }
+
+    #[test]
     fn recent_sessions_filter_activity_before_applying_the_limit() {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(SCHEMA).unwrap();
@@ -420,7 +474,7 @@ mod tests {
         )
         .unwrap();
 
-        let cat = Catalog::load(&c).unwrap();
+        let cat = Catalog::load(&c, false).unwrap();
         let (all, total) = cat.recent(None, None, None, 200);
         assert_eq!(total, 125);
         assert_eq!(all.len(), 125);
@@ -456,7 +510,7 @@ mod tests {
         )
         .unwrap();
 
-        let cat = Catalog::load(&c).unwrap();
+        let cat = Catalog::load(&c, false).unwrap();
         let (rows, total) = cat.recent(Some("billing"), None, None, 2);
         assert_eq!(total, 3);
         assert_eq!(rows.len(), 2);

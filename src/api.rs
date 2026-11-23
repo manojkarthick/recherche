@@ -111,8 +111,13 @@ impl Page {
 
 // Session details and entity results share the full representation. The catalog
 // holds most fields; read the remaining stored metadata without enriching it.
-fn session_json(cat: &Catalog, session: &SessionMeta, conn: &Connection) -> anyhow::Result<Value> {
-    let (original_title, generated_title, title_is_prompt, bytes, bad_lines, summary_turns): (
+fn session_json(
+    engine: &Engine,
+    cat: &Catalog,
+    session: &SessionMeta,
+    conn: &Connection,
+) -> anyhow::Result<Value> {
+    let (mut original_title, generated_title, title_is_prompt, bytes, bad_lines, summary_turns): (
         Option<String>,
         Option<String>,
         bool,
@@ -134,6 +139,13 @@ fn session_json(cat: &Catalog, session: &SessionMeta, conn: &Connection) -> anyh
             ))
         },
     )?;
+    if engine.cfg.ui.hide_system_instructions
+        && title_is_prompt
+        && let Some(title) = &original_title
+        && let Some(t) = crate::store::title_without_system_instructions(conn, &session.id, title)?
+    {
+        original_title = Some(t);
+    }
     let mut children = cat.children.get(&session.id).cloned().unwrap_or_default();
     children.sort();
     let entities: Vec<_> = cat
@@ -221,7 +233,7 @@ async fn session(
             .sessions
             .get(&id)
             .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "No session with that ID.".into()))?;
-        Ok(session_json(&cat, session, &engine.conn()?)?)
+        Ok(session_json(&engine, &cat, session, &engine.conn()?)?)
     })
     .await??;
     Ok(Json(body))
@@ -247,11 +259,14 @@ async fn turns(
         // SQLite uses signed offsets. Larger API offsets are necessarily past
         // every stored turn, so represent them as the largest SQLite offset.
         let offset = i64::try_from(page.offset).unwrap_or(i64::MAX);
+        let hide = engine.cfg.ui.hide_system_instructions;
         let rows = statement.query_map(rusqlite::params![id, page.limit as i64, offset], |row| {
+            let user = row.get::<_, String>(4)?;
+            let user = if hide { crate::util::strip_system_instructions(&user).into_owned() } else { user };
             Ok((json!({
                 "index": row.get::<_, i64>(0)?, "timestamp": row.get::<_, Option<i64>>(1)?,
                 "branch": row.get::<_, Option<String>>(2)?, "cwd": row.get::<_, Option<String>>(3)?,
-                "user": row.get::<_, String>(4)?, "assistant": row.get::<_, String>(5)?,
+                "user": user, "assistant": row.get::<_, String>(5)?,
                 "tool_text": row.get::<_, String>(6)?, "files": row.get::<_, String>(7)?,
                 "commands": row.get::<_, String>(8)?, "errors": row.get::<_, String>(9)?,
             }), row.get::<_, String>(10)?))
@@ -293,7 +308,7 @@ async fn entity_sessions(
             .skip(page.offset)
             .take(page.limit)
             .filter_map(|id| cat.sessions.get(id))
-            .map(|session| session_json(&cat, session, &conn))
+            .map(|session| session_json(&engine, &cat, session, &conn))
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(json!({"items": items, "total": ids.len(), "page": page.json(ids.len())}))
     })
@@ -390,6 +405,37 @@ second line', errors = 'Stored error',
         let status = response.status();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn hidden_system_instructions_match_the_ui() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::Config::default();
+        cfg.search.vectors = false;
+        cfg.search.rerank = false;
+        cfg.llm.enabled = false;
+        cfg.ui.hide_system_instructions = true;
+        let engine = Engine::open_in(cfg, dir.path()).unwrap();
+        let conn = engine.conn().unwrap();
+        conn.execute_batch(
+            "INSERT INTO sessions (id, source, host, title, title_is_prompt, turn_count, archive_path)
+             VALUES ('s', 'claude', '', '<system_instruction>', 1, 1, '');
+             INSERT INTO turns
+             (session_id, idx, user_text, assistant_text, tool_text, files, commands, errors, tools_json, ukey, chash)
+             VALUES ('s', 0, '<system_instruction>
+be brief
+</system_instruction>
+
+fix the test', '', '', '', '', '', '[]', 'a', 'a');",
+        )
+        .unwrap();
+        *engine.catalog.write().unwrap() = Arc::new(Catalog::load(&conn, true).unwrap());
+        let app = crate::web::router(Arc::new(engine));
+        let (_, session) = get(&app, "/api/sessions/s").await;
+        assert_eq!(session["title"], "fix the test");
+        assert_eq!(session["original_title"], "fix the test");
+        let (_, turns) = get(&app, "/api/sessions/s/turns").await;
+        assert_eq!(turns["items"][0]["user"], "fix the test");
     }
 
     #[tokio::test]
@@ -592,7 +638,7 @@ second line', errors = 'Stored error',
             )
             .unwrap();
         }
-        *engine.catalog.write().unwrap() = Arc::new(Catalog::load(&conn).unwrap());
+        *engine.catalog.write().unwrap() = Arc::new(Catalog::load(&conn, false).unwrap());
         let app = crate::web::router(engine);
         for (offset, length, next_offset) in [(0, 60, Some(60)), (60, 40, None), (100, 0, None)] {
             let (status, body) = get(&app, &format!("/api/search?limit=60&offset={offset}")).await;
