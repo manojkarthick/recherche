@@ -451,6 +451,7 @@ mod tests {
         for (cwd, repo) in [
             ("/home/u/.codex/worktrees/0867/shop", "shop"),
             ("/home/u/.codex/worktrees/0867/shop/src", "shop"),
+            ("/home/u/.cursor/worktrees/shop/abc123", "shop"),
             ("/home/u/.herdr/worktrees/shop/fix-login", "shop"),
             ("/home/u/conductor/workspaces/shop/nagoya", "shop"),
             ("/home/u/code/shop/.claude/worktrees/fix-login", "shop"),

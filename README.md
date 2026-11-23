@@ -1,6 +1,6 @@
 # recherche
 
-Search your past Claude Code, Codex and Antigravity sessions by what you remember: a few
+Search your past Claude Code, Codex, Antigravity and Cursor sessions by what you remember: a few
 words, a ticket, a pull request, a branch, or a sentence like “the thread where
 we fixed the ordering issue.”
 
@@ -13,7 +13,7 @@ similar meaning. No API key is needed for that workflow.
 
 ## What you can do
 
-- Find work across Claude Code, Codex and Antigravity without remembering which agent you used.
+- Find work across Claude Code, Codex, Antigravity and Cursor without remembering which agent you used.
 - Search by prompts, replies, commands, errors, files, tickets, PRs, or branches.
 - Read a transcript, follow related sessions, and copy a command to resume it.
 - Keep imported sessions searchable after their original files or worktrees disappear.
@@ -77,9 +77,10 @@ recherche imports JSONL session files from:
 | Claude Code | `~/.claude/projects/`, including subagent sessions |
 | Codex | `~/.codex/sessions/` and `~/.codex/archived_sessions/` |
 | Antigravity | `~/.gemini/antigravity-cli/brain/`, with titles and directories from `conversation_summaries.db` |
+| Cursor | `~/.cursor/projects/*/agent-transcripts/`, including subagent sessions, with metadata from `~/.cursor/chats/` and `sdk-agent-store/` |
 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, or explicit source settings, can change
-these roots; Antigravity's root is set with `sources.antigravity.dir`. See [configuration](docs/configuration.md).
+these roots; Antigravity and Cursor roots are set with `sources.antigravity.dir` and `sources.cursor.dir`. See [configuration](docs/configuration.md).
 
 The server starts an initial import in the background and keeps watching for
 changes. Keyword results become available before embedding finishes. Local
@@ -175,7 +176,7 @@ cargo test --locked
 ```
 
 To try UI changes or take screenshots without your own sessions, run
-`cargo run -- demo`. It serves made-up Claude Code, Codex and Antigravity sessions from
+`cargo run -- demo`. It serves made-up Claude Code, Codex, Antigravity and Cursor sessions from
 [`demo/sessions/`](demo/) on <http://127.0.0.1:7778>, where each file is one
 session; see [demo/README.md](demo/README.md) to add more.
 

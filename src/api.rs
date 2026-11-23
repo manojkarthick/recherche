@@ -383,6 +383,7 @@ second line', errors = 'Stored error',
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         cfg.search.rerank = false;
         cfg.llm.enabled = false;
         let engine = Engine::open_in(cfg, dir.path()).unwrap();

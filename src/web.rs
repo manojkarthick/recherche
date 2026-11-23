@@ -824,6 +824,7 @@ pub fn agent_product(source: &str) -> &'static str {
     match source {
         "claude" => "Claude Code",
         "antigravity" => "Antigravity",
+        "cursor" => "Cursor",
         _ => "Codex",
     }
 }
@@ -832,6 +833,7 @@ pub fn agent_name(source: &str) -> &'static str {
     match source {
         "claude" => "Claude",
         "antigravity" => "Antigravity",
+        "cursor" => "Cursor",
         _ => "Codex",
     }
 }
@@ -2329,6 +2331,7 @@ mod tests {
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         cfg.search.vectors = false;
         cfg.search.rerank = false;
         cfg.llm.enabled = true;
@@ -2581,6 +2584,7 @@ mod tests {
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         cfg.search.vectors = false;
         cfg.search.rerank = false;
         cfg.llm.enabled = true;

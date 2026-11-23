@@ -299,6 +299,7 @@ impl Style {
             "claude" => self.yellow(s),
             "codex" => self.cyan(s),
             "antigravity" => self.blue(s),
+            "cursor" => self.green(s),
             _ => self.dim(s),
         }
     }

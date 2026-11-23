@@ -1,12 +1,13 @@
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod cursor;
 
 use crate::model::ParsedSession;
 use std::path::Path;
 
 /// Every source, as stored in `sessions.source`.
-pub const SOURCES: [&str; 3] = ["claude", "codex", "antigravity"];
+pub const SOURCES: [&str; 4] = ["claude", "codex", "antigravity", "cursor"];
 
 /// The static name of a source read back from the database.
 pub fn source(name: &str) -> &'static str {
@@ -17,6 +18,7 @@ pub fn parse(source: &str, path: &Path, bytes: &[u8]) -> ParsedSession {
     match source {
         "claude" => claude::parse(path, bytes),
         "antigravity" => antigravity::parse(path, bytes),
+        "cursor" => cursor::parse(path, bytes),
         _ => codex::parse(path, bytes),
     }
 }

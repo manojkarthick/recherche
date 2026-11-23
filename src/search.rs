@@ -596,6 +596,7 @@ mod tests {
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         cfg.llm.enabled = false;
         cfg.search.rerank = false;
         let cli = Engine::open_in(cfg.clone(), dir.path())?;
@@ -657,6 +658,7 @@ mod tests {
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         cfg.search.vectors = false;
         cfg.search.rerank = false;
         cfg.llm.enabled = false;

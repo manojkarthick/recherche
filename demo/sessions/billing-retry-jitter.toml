@@ -1,0 +1,43 @@
+# A Cursor session. Its title, directory and model come from ~/.cursor/chats/
+# metadata alongside the agent-transcripts JSONL.
+agent = "cursor"
+cwd = "code/billing"
+ago = "1d8h"
+model = "claude-4.5-sonnet"
+title = "Add jitter to webhook retry backoff"
+
+[[turns]]
+prompt = "when a downstream webhook receiver comes back up, all queued retries hit it in the same second"
+reply = "The retry scheduler uses a flat exponential backoff (`2^attempt * 30s`) with no jitter, so retries created during an outage stay synchronized. I'll add full jitter bounded by the capped delay."
+
+[[turns.tools]]
+name = "Read"
+input = { path = "{root}/code/billing/src/webhooks/retry.rs" }
+
+[[turns.tools]]
+name = "StrReplace"
+input = { path = "{root}/code/billing/src/webhooks/retry.rs" }
+
+[[turns.tools]]
+command = "cargo test webhooks::retry"
+
+[[turns]]
+prompt = "make sure the test checks the delay stays within the cap"
+reply = "Added a property check over 200 samples asserting each delay lies in `0..=capped_delay` and `cargo test webhooks::retry` passes."
+
+[[turns.tools]]
+name = "StrReplace"
+input = { path = "{root}/code/billing/src/webhooks/retry.rs" }
+
+[[turns.tools]]
+command = "cargo test webhooks::retry"
+
+[summary]
+title = "Add full jitter to webhook retry backoff"
+summary = '''
+- Synchronized webhook retries were hammering receivers on recovery because backoff had no randomness.
+- Switched `next_retry_delay` to full jitter within the capped exponential window.
+- Added a bounded-range test covering 200 samples.'''
+kind = "bugfix"
+outcome = "fixed"
+tags = ["webhooks", "retries"]

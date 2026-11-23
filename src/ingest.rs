@@ -9,7 +9,7 @@
 use crate::config::Config;
 use crate::extract;
 use crate::model::{Fact, ParsedSession};
-use crate::parse::antigravity;
+use crate::parse::{antigravity, cursor};
 use crate::util::{count, hash};
 use anyhow::Result;
 use regex::Regex;
@@ -59,6 +59,23 @@ fn discover(cfg: &Config) -> Vec<(&'static str, PathBuf, PathBuf)> {
             out.push(("antigravity", p, rel));
         }
     }
+    let cursor = cfg.cursor_dir();
+    let cursor_projects = cursor.join("projects");
+    for e in std::fs::read_dir(&cursor_projects)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if !e.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let transcripts = e.path().join("agent-transcripts");
+        walk(&transcripts, &mut |p, plain| {
+            if let Ok(rel) = plain.strip_prefix(&cursor) {
+                out.push(("cursor", p.to_path_buf(), rel.to_path_buf()));
+            }
+        });
+    }
     out
 }
 
@@ -67,6 +84,14 @@ fn antigravity_meta(cfg: &Config) -> HashMap<String, String> {
     antigravity::read_meta(&cfg.antigravity_dir()).unwrap_or_else(|err| {
         tracing::warn!("cannot read Antigravity conversation titles and directories: {err:#}");
         HashMap::new()
+    })
+}
+
+/// Cursor metadata by session and project; see `cursor::read_meta`.
+fn cursor_meta(cfg: &Config) -> cursor::CursorMeta {
+    cursor::read_meta(&cfg.cursor_dir()).unwrap_or_else(|err| {
+        tracing::warn!("cannot read Cursor session metadata: {err:#}");
+        cursor::CursorMeta::default()
     })
 }
 
@@ -183,6 +208,11 @@ impl<'a> Ingester<'a> {
         } else {
             HashMap::new()
         };
+        let cur_meta = if found.iter().any(|f| f.0 == "cursor") {
+            cursor_meta(self.cfg)
+        } else {
+            cursor::CursorMeta::default()
+        };
         for (source, src, rel) in found {
             stats.files += 1;
             let Ok(meta) = std::fs::metadata(&src) else {
@@ -194,7 +224,9 @@ impl<'a> Ingester<'a> {
             let inode = meta.ino() as i64;
             let old = known.get(&key);
             let dst = self.archive.join(source).join(&rel);
-            let meta_changed = source == "antigravity" && antigravity::write_meta(&agy_meta, &dst)?;
+            let meta_changed = (source == "antigravity"
+                && antigravity::write_meta(&agy_meta, &dst)?)
+                || (source == "cursor" && cursor::write_meta(&cur_meta, &dst)?);
             if !rebuild
                 && !meta_changed
                 && old.is_some_and(|o| o.0 == size && o.1 == mtime && o.2 == inode)
@@ -301,6 +333,11 @@ impl<'a> Ingester<'a> {
         } else {
             HashMap::new()
         };
+        let cur_meta = if session_source == "cursor" {
+            cursor_meta(self.cfg)
+        } else {
+            cursor::CursorMeta::default()
+        };
         let mut todo: Vec<(&'static str, Option<String>, PathBuf)> = vec![];
         for (src_path, source, archive_path, old_size, old_inode, old_prefix) in files {
             let source_static = crate::parse::source(&source);
@@ -329,6 +366,8 @@ impl<'a> Ingester<'a> {
                 }
                 if source_static == "antigravity" {
                     antigravity::write_meta(&agy_meta, &dst)?;
+                } else if source_static == "cursor" {
+                    cursor::write_meta(&cur_meta, &dst)?;
                 }
                 let src_key = src.to_string_lossy().into_owned();
                 c.execute(
@@ -753,6 +792,7 @@ mod tests {
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
         Ingester::new(&cfg, dir.path().join("archive")).run(&mut c, false)?;
 
@@ -791,6 +831,7 @@ mod tests {
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
         let archive = dir.path().join("archive");
         let ing = Ingester::new(&cfg, archive.clone());
@@ -852,6 +893,7 @@ mod tests {
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(root.clone());
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
         let ing = Ingester::new(&cfg, dir.path().join("archive"));
         let session = |c: &Connection| -> Result<(String, String, Option<String>, i64)> {
@@ -903,6 +945,128 @@ mod tests {
     }
 
     #[test]
+    fn cursor_metadata_is_archived_beside_the_transcript() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().join("cursor");
+        let proj = root.join("projects/work-app");
+        let tdir = proj.join("agent-transcripts/sess-1");
+        std::fs::create_dir_all(tdir.join("subagents"))?;
+        std::fs::write(
+            proj.join(".workspace-trusted"),
+            serde_json::json!({"workspacePath": "/work/app"}).to_string(),
+        )?;
+        let msg = |role: &str, text: &str| {
+            serde_json::json!({
+                "role": role,
+                "message": {"content": [{"type": "text", "text": text}]}
+            })
+            .to_string()
+        };
+        std::fs::write(
+            tdir.join("sess-1.jsonl"),
+            [
+                msg(
+                    "user",
+                    "<timestamp>Friday, Nov 20, 2026, 4:26 PM (UTC-7)</timestamp>\n<user_query>\nfix the flaky upload test\n</user_query>",
+                ),
+                msg("assistant", "Fixed."),
+            ]
+            .join("\n")
+                + "\n",
+        )?;
+        std::fs::write(
+            tdir.join("subagents/sub-1.jsonl"),
+            [
+                msg(
+                    "user",
+                    "<timestamp>Friday, Nov 20, 2026, 4:27 PM (UTC-7)</timestamp>\n<user_query>\ncheck callers\n</user_query>",
+                ),
+                msg("assistant", "Checked."),
+            ]
+            .join("\n")
+                + "\n",
+        )?;
+        let chat = root.join("chats/hash1/sess-1");
+        std::fs::create_dir_all(&chat)?;
+        let write_chat_meta = |title: Option<&str>| -> Result<()> {
+            let mut v = serde_json::json!({
+                "schemaVersion": 1,
+                "createdAtMs": 1_795_217_165_000_i64,
+                "updatedAtMs": 1_795_217_300_000_i64,
+                "cwd": "/work/app",
+            });
+            if let Some(t) = title {
+                v["title"] = t.into();
+            }
+            Ok(std::fs::write(chat.join("meta.json"), v.to_string())?)
+        };
+        write_chat_meta(None)?;
+
+        let mut cfg = Config::default();
+        cfg.sources.claude.dir = Some(dir.path().join("claude"));
+        cfg.sources.codex.dir = Some(dir.path().join("codex"));
+        cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(root.clone());
+        let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
+        let ing = Ingester::new(&cfg, dir.path().join("archive"));
+        let session = |c: &Connection,
+                       id: &str|
+         -> Result<(String, String, Option<String>, Option<String>, i64)> {
+            Ok(c.query_row(
+                "SELECT source, title, cwd, parent_id, turn_count FROM sessions WHERE id = ?",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )?)
+        };
+        ing.run(&mut c, false)?;
+        assert_eq!(
+            session(&c, "sess-1")?,
+            (
+                "cursor".into(),
+                "fix the flaky upload test".into(),
+                Some("/work/app".into()),
+                None,
+                1
+            )
+        );
+        assert_eq!(
+            session(&c, "sub-1")?,
+            (
+                "cursor".into(),
+                "check callers".into(),
+                Some("/work/app".into()),
+                Some("sess-1".into()),
+                1
+            )
+        );
+
+        // Cursor names the chat after its last message was written.
+        write_chat_meta(Some("Fix flaky upload test"))?;
+        ing.run(&mut c, false)?;
+        assert_eq!(session(&c, "sess-1")?.1, "Fix flaky upload test");
+        write_chat_meta(Some("Fix upload test"))?;
+        ing.reindex_session(&mut c, "sess-1")?;
+        assert_eq!(session(&c, "sess-1")?.1, "Fix upload test");
+
+        // Once Cursor drops the originals, a rebuild reads the archive + sidecar.
+        std::fs::remove_dir_all(root.join("projects"))?;
+        std::fs::remove_dir_all(root.join("chats"))?;
+        ing.run(&mut c, true)?;
+        assert_eq!(
+            session(&c, "sess-1")?,
+            (
+                "cursor".into(),
+                "Fix upload test".into(),
+                Some("/work/app".into()),
+                None,
+                1
+            )
+        );
+        assert_eq!(session(&c, "sub-1")?.3.as_deref(), Some("sess-1"));
+        Ok(())
+    }
+
+    #[test]
     fn reindex_session_updates_one_session_preserves_summary_and_uses_archive() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let project = dir.path().join("claude/projects/repo");
@@ -922,6 +1086,7 @@ mod tests {
         cfg.sources.claude.dir = Some(dir.path().join("claude"));
         cfg.sources.codex.dir = Some(dir.path().join("codex"));
         cfg.sources.antigravity.dir = Some(dir.path().join("antigravity"));
+        cfg.sources.cursor.dir = Some(dir.path().join("cursor"));
         let mut c = crate::store::open(&dir.path().join("recherche.db"))?;
         let ing = Ingester::new(&cfg, dir.path().join("archive"));
         ing.run(&mut c, false)?;

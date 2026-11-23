@@ -11,10 +11,11 @@ is in `demo/README.md`.
 ## Don't touch real data
 
 `demo` keeps everything under its own directory. Any other command (`index`,
-`search`, `serve`, `doctor`) reads the real Claude Code, Codex and Antigravity sessions
+`search`, `serve`, `doctor`) reads the real Claude Code, Codex, Antigravity and Cursor sessions
 and writes to the real index unless `RECHERCHE_DATA_DIR`, `CLAUDE_CONFIG_DIR`
 and `CODEX_HOME` all point at a scratch directory and a `--config` file sets
-`sources.antigravity.dir` to one too; Antigravity has no environment variable.
+`sources.antigravity.dir` and `sources.cursor.dir` to one too; Antigravity and
+Cursor have no environment variable.
 
 ## Before pushing
 

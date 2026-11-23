@@ -13,6 +13,7 @@ ticket_patterns = ['\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b']
 # The first matching pattern wins.
 worktree_patterns = [
   '/\.codex/worktrees/[^/]+/(?P<repo>[^/]+)',
+  '/\.cursor/worktrees/(?P<repo>[^/]+)/[^/]+',
   '/\.herdr/worktrees/(?P<repo>[^/]+)/[^/]+',
   '/conductor/workspaces/(?P<repo>[^/]+)/[^/]+',
   '/worktrees/(?P<repo>[^/]+)/[^/]+',
@@ -33,6 +34,9 @@ exclude_sources = ["exec"]          # `codex exec` runs
 [sources.antigravity]
 # dir = "~/.gemini/antigravity-cli"  # default
 
+[sources.cursor]
+# dir = "~/.cursor"                  # default
+
 [search]
 vectors = true
 rerank = true
@@ -49,7 +53,7 @@ rewrite_model = ""                         # empty: use `model`
 deny_data_collection = true                # only hosts that don't store prompts
 rewrite = true
 summaries = true
-summarize_sources = ["claude", "codex", "antigravity"]
+summarize_sources = ["claude", "codex", "antigravity", "cursor"]
 summarize_exclude_paths = []  # cwd substrings never sent for summaries
 idle_minutes = 20
 
