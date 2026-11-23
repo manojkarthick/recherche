@@ -6,6 +6,11 @@
    green when something worked, red when it failed. Monospace is reserved for literal things you could paste into a
    terminal: repos, branches, commands, paths and tool calls. */
 
+/* Variable fonts, so the in-between weights (550, 650) render as drawn
+   rather than snapping to the nearest static cut. */
+@font-face { font-family: "Geist"; src: url("/assets/fonts/Geist.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("/assets/fonts/GeistMono.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
 :root {
   --bg: #fafafa;
   --raise: #ffffff;
@@ -24,8 +29,8 @@
   --ok-soft: #e6f4ea;
   --warn: #c0221a;
   --warn-soft: #fcebea;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, "JetBrains Mono", Consolas, monospace;
+  --sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --radius: 6px;
   color-scheme: light dark;
 }
