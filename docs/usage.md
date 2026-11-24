@@ -37,7 +37,7 @@ Add filters directly to a query in either interface:
 | Filter | Example | Meaning |
 | --- | --- | --- |
 | `repo:` | `repo:example` | Restrict to a repository known to the archive |
-| `agent:` | `agent:claude` | `claude`, `codex` or `antigravity` |
+| `agent:` | `agent:claude` | `claude`, `codex`, `antigravity` or `cursor` |
 | `branch:` | `branch:fix-login` | Restrict to sessions with that branch |
 | `since:` | `since:30d` | Include sessions with activity at or after the cutoff |
 | `until:` | `until:2026-03-31` | Include sessions that started by the end of that date |
@@ -83,9 +83,9 @@ working directories are indicated in the UI.
 | `Escape` | Leave a text field; on a session page, navigate back when not typing |
 
 A resume command changes to the recorded working directory when one is known,
-then invokes `claude --resume`, `codex resume` or `agy --conversation`. Copying does not execute it.
+then invokes `claude --resume`, `codex resume`, `agy --conversation` or `agent --resume`. Copying does not execute it.
 recherche's archive supports searching and reading; it does not restore deleted
-worktrees or install archived sessions back into any agent. Claude subagent
+worktrees or install archived sessions back into any agent. Claude and Cursor subagent
 results use their parent session's resume command.
 
 ## CLI reference

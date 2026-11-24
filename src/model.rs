@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 #[derive(Debug, Default, Clone)]
 pub struct ParsedSession {
     pub id: String,
-    /// "claude", "codex" or "antigravity".
+    /// "claude", "codex", "antigravity" or "cursor".
     pub source: &'static str,
     pub parent_id: Option<String>,
     pub cwd: Option<String>,
@@ -40,7 +40,14 @@ pub struct Turn {
 }
 
 /// Tools whose input is a shell command.
-pub const COMMAND_TOOLS: [&str; 5] = ["Bash", "exec", "shell", "exec_command", "run_command"];
+pub const COMMAND_TOOLS: [&str; 6] = [
+    "Bash",
+    "exec",
+    "shell",
+    "Shell",
+    "exec_command",
+    "run_command",
+];
 
 #[derive(Debug, Default, Clone)]
 pub struct ToolCall {

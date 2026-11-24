@@ -29,7 +29,7 @@ use std::sync::Arc;
 #[command(
     name = "recherche",
     version,
-    about = "Search your past Claude Code, Codex and Antigravity sessions"
+    about = "Search your past Claude Code, Codex, Antigravity and Cursor sessions"
 )]
 struct Cli {
     /// Config file. Default: $XDG_CONFIG_HOME/recherche/config.toml
@@ -52,7 +52,7 @@ enum Cmd {
         /// Restrict to a repository known to the archive.
         #[arg(long)]
         repo: Option<String>,
-        /// Restrict to an agent (`claude` or `codex`).
+        /// Restrict to an agent (`claude`, `codex`, `antigravity` or `cursor`).
         #[arg(long)]
         agent: Option<String>,
         /// Maximum number of sessions to show.
@@ -441,12 +441,13 @@ pub fn agent_resume(s: &store::SessionMeta) -> String {
     resume_argv(s).join(" ")
 }
 
-/// Claude and Antigravity subagents resume through their parent session.
+/// Claude, Antigravity and Cursor subagents resume through their parent session.
 pub fn resume_argv(s: &store::SessionMeta) -> [&str; 3] {
     let top = s.parent_id.as_deref().unwrap_or(&s.id);
     match s.source.as_str() {
         "claude" => ["claude", "--resume", top],
         "antigravity" => ["agy", "--conversation", top],
+        "cursor" => ["agent", "--resume", top],
         _ => ["codex", "resume", &s.id],
     }
 }
@@ -528,6 +529,7 @@ fn doctor(cfg: config::Config, env_status: &config::EnvFileStatus) -> Result<()>
     println!("claude       {}", engine.cfg.claude_dir().display());
     println!("codex        {}", engine.cfg.codex_dir().display());
     println!("antigravity  {}", engine.cfg.antigravity_dir().display());
+    println!("cursor       {}", engine.cfg.cursor_dir().display());
     let mut st = c.prepare("SELECT source, COUNT(*), SUM(skip), SUM(bad_lines), SUM(summary IS NOT NULL) FROM sessions GROUP BY source")?;
     for row in st.query_map([], |r| {
         Ok((

@@ -21,6 +21,7 @@ recherche uses XDG locations on every supported OS, including macOS:
 | Claude Code root | `~/.claude/` | `CLAUDE_CONFIG_DIR`, or `sources.claude.dir` |
 | Codex root | `~/.codex/` | `CODEX_HOME`, or `sources.codex.dir` |
 | Antigravity root | `~/.gemini/antigravity-cli/` | `sources.antigravity.dir` |
+| Cursor root | `~/.cursor/` | `sources.cursor.dir` |
 
 An explicit source setting takes precedence over its environment variable.
 `RECHERCHE_DATA_DIR` takes precedence over `XDG_DATA_HOME`. Selecting a different
@@ -48,6 +49,9 @@ dir = "/absolute/path/to/codex-data"
 
 [sources.antigravity]
 dir = "/absolute/path/to/antigravity-cli"
+
+[sources.cursor]
+dir = "/absolute/path/to/cursor"
 ```
 
 Restart `serve` after changing configuration or environment variables.
@@ -134,7 +138,7 @@ rewrite_model = ""
 deny_data_collection = true
 rewrite = true
 summaries = true
-summarize_sources = ["claude", "codex", "antigravity"]
+summarize_sources = ["claude", "codex", "antigravity", "cursor"]
 summarize_exclude_paths = []
 idle_minutes = 20
 ```

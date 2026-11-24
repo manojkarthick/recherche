@@ -30,6 +30,7 @@ pub struct Sources {
     pub claude: ClaudeSource,
     pub codex: CodexSource,
     pub antigravity: AntigravitySource,
+    pub cursor: CursorSource,
     pub poll_seconds: u64,
 }
 
@@ -55,6 +56,13 @@ pub struct CodexSource {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct AntigravitySource {
+    pub dir: Option<PathBuf>,
+}
+
+/// Cursor (`agent` CLI and IDE agent transcripts).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CursorSource {
     pub dir: Option<PathBuf>,
 }
 
@@ -124,6 +132,7 @@ impl Default for Config {
             worktree_patterns: vec![
                 // Codex puts the id before the repo, so it must precede the generic layout.
                 r"/\.codex/worktrees/[^/]+/(?P<repo>[^/]+)".into(),
+                r"/\.cursor/worktrees/(?P<repo>[^/]+)/[^/]+".into(),
                 r"/\.herdr/worktrees/(?P<repo>[^/]+)/[^/]+".into(),
                 r"/conductor/workspaces/(?P<repo>[^/]+)/[^/]+".into(),
                 r"/worktrees/(?P<repo>[^/]+)/[^/]+".into(),
@@ -142,6 +151,7 @@ impl Default for Sources {
             claude: ClaudeSource::default(),
             codex: CodexSource::default(),
             antigravity: AntigravitySource::default(),
+            cursor: CursorSource::default(),
             poll_seconds: 30,
         }
     }
@@ -176,7 +186,12 @@ impl Default for Llm {
             deny_data_collection: true,
             rewrite: true,
             summaries: true,
-            summarize_sources: vec!["claude".into(), "codex".into(), "antigravity".into()],
+            summarize_sources: vec![
+                "claude".into(),
+                "codex".into(),
+                "antigravity".into(),
+                "cursor".into(),
+            ],
             summarize_exclude_paths: vec![],
             idle_minutes: 20,
         }
@@ -313,6 +328,14 @@ impl Config {
             .dir
             .clone()
             .unwrap_or_else(|| home().join(".gemini/antigravity-cli"))
+    }
+
+    pub fn cursor_dir(&self) -> PathBuf {
+        self.sources
+            .cursor
+            .dir
+            .clone()
+            .unwrap_or_else(|| home().join(".cursor"))
     }
 
     pub fn is_loopback(&self) -> bool {

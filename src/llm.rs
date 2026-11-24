@@ -236,7 +236,7 @@ impl Llm {
         }
         drop(db);
         let system = format!(
-            "You expand search queries for a personal archive of coding-agent sessions (Claude Code, Codex and Antigravity transcripts). \
+            "You expand search queries for a personal archive of coding-agent sessions (Claude Code, Codex, Antigravity and Cursor transcripts). \
              The user half-remembers a session. Reply with one JSON object and nothing else: \
              {{\"terms\": [up to 8 short alternative words, phrases or identifiers the transcript may use instead of the user's words], \
              \"repo\": one of the known repos if the query clearly names it, else null, \

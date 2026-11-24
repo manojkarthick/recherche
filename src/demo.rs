@@ -1,10 +1,10 @@
-//! `recherche demo`: serves made-up Claude Code, Codex and Antigravity
+//! `recherche demo`: serves made-up Claude Code, Codex, Antigravity and Cursor
 //! sessions, so UI changes can be tried and screenshots taken without showing
 //! real work.
 //!
 //! Each file in `demo/sessions/` is one session. The command writes them as
-//! the agents would, into `<dir>/claude`, `<dir>/codex` and
-//! `<dir>/antigravity`, indexes them into
+//! the agents would, into `<dir>/claude`, `<dir>/codex`,
+//! `<dir>/antigravity` and `<dir>/cursor`, indexes them into
 //! `<dir>/data`, stores their summaries and serves the result. Dates are
 //! relative to now, so the demo looks the same whenever it runs. See
 //! `demo/README.md` for the fixture format.
@@ -37,12 +37,12 @@ struct Fixture {
     /// When the session started, such as `3d`, `5h` or `2d4h30m`.
     ago: String,
     model: Option<String>,
-    /// Claude and Antigravity: the title the agent generated. Without it, the
-    /// first prompt becomes the title.
+    /// Claude, Antigravity and Cursor: the title the agent generated. Without it,
+    /// the first prompt becomes the title.
     title: Option<String>,
     /// Claude: a PR the session opened, as `owner/repo#123`.
     pr: Option<String>,
-    /// Claude: makes this a subagent of the named fixture.
+    /// Claude and Cursor: makes this a subagent of the named fixture.
     parent: Option<String>,
     /// Codex: the remote recorded in the session, as `owner/repo`.
     repo: Option<String>,
@@ -56,6 +56,7 @@ enum Agent {
     Claude,
     Codex,
     Antigravity,
+    Cursor,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,8 +68,8 @@ struct Turn {
     tools: Vec<Tool>,
 }
 
-/// A shell `command`, or for Claude and Antigravity any tool by `name` and
-/// `input`.
+/// A shell `command`, or for Claude, Antigravity and Cursor any tool by `name`
+/// and `input`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Tool {
@@ -117,6 +118,7 @@ pub fn prepare(mut cfg: Config, dir: &Path) -> Result<Engine> {
     cfg.sources.claude.dir = Some(dir.join("claude"));
     cfg.sources.codex.dir = Some(dir.join("codex"));
     cfg.sources.antigravity.dir = Some(dir.join("antigravity"));
+    cfg.sources.cursor.dir = Some(dir.join("cursor"));
     // The UI explains missing summaries only when summaries are on, which
     // needs a key. Any set variable will do: the API is a closed local port,
     // so made-up sessions are never sent anywhere.
@@ -166,6 +168,7 @@ fn write(dir: &Path, name: &str, f: &Fixture, now: DateTime<Utc>) -> Result<Stri
         Agent::Claude => claude(dir, name, f, &cwd, start)?,
         Agent::Codex => codex(dir, name, f, &cwd, start, now)?,
         Agent::Antigravity => antigravity(dir, name, f, &cwd, start)?,
+        Agent::Cursor => cursor(dir, name, f, &cwd, start)?,
     };
     std::fs::create_dir_all(path.parent().unwrap())?;
     let mut text = String::new();
@@ -437,6 +440,110 @@ fn antigravity(
     Ok((path, lines, id))
 }
 
+fn cursor(dir: &Path, name: &str, f: &Fixture, cwd: &str, start: DateTime<Utc>) -> Result<Session> {
+    if f.pr.is_some() || f.repo.is_some() {
+        bail!("`pr` and `repo` are not used for Cursor");
+    }
+    let id = uuid(name);
+    let model = f.model.as_deref().unwrap_or("claude-4.5-sonnet");
+    let mut lines: Vec<Value> = vec![];
+    let mut t = start;
+    for turn in &f.turns {
+        let prompt = format!(
+            "<timestamp>{}</timestamp>\n<user_query>\n{}\n</user_query>",
+            t.format("%A, %b %-d, %Y, %-I:%M %p (UTC+0)"),
+            turn.prompt
+        );
+        lines.push(json!({
+            "role": "user",
+            "message": { "content": [{ "type": "text", "text": prompt }] }
+        }));
+        t += Duration::minutes(1);
+        for tool in &turn.tools {
+            let (tool_name, input) = match (&tool.command, &tool.name) {
+                (Some(cmd), None) => ("Shell", json!({ "command": cmd })),
+                (None, Some(name)) => (name.as_str(), tool.input.clone().unwrap_or(json!({}))),
+                _ => bail!("a tool needs either `command` or `name`"),
+            };
+            lines.push(json!({
+                "role": "assistant",
+                "message": { "content": [{ "type": "tool_use", "name": tool_name, "input": input }] }
+            }));
+            t += Duration::seconds(30);
+        }
+        lines.push(json!({
+            "role": "assistant",
+            "message": { "content": [{ "type": "text", "text": turn.reply }] }
+        }));
+        t += Duration::minutes(4);
+    }
+    let root = dir.join("cursor");
+    // Cursor names project directories by collapsing non-alphanumeric runs to `-`.
+    let mut slug = String::new();
+    let mut last_dash = false;
+    for c in cwd.trim_start_matches('/').chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+            last_dash = false;
+        } else if !last_dash {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    let project = root.join("projects").join(slug.trim_matches('-'));
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(
+        project.join(".workspace-trusted"),
+        json!({ "workspacePath": cwd }).to_string(),
+    )?;
+    if f.parent.is_none() {
+        let ws_hash = hex(cwd, 16);
+        let chat = root.join("chats").join(ws_hash).join(&id);
+        std::fs::create_dir_all(&chat)?;
+        let mut meta = json!({
+            "cwd": cwd,
+            "createdAtMs": start.timestamp_millis(),
+            "updatedAtMs": t.timestamp_millis(),
+        });
+        if let Some(title) = &f.title {
+            meta["title"] = json!(title);
+        }
+        std::fs::write(chat.join("meta.json"), meta.to_string())?;
+        let c = rusqlite::Connection::open(chat.join("store.db"))?;
+        c.execute(
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )?;
+        let db_meta = json!({
+            "agentId": id,
+            "name": f.title.as_deref().unwrap_or(""),
+            "createdAt": start.timestamp_millis(),
+            "lastUsedModel": model,
+        });
+        let encoded: String = db_meta
+            .to_string()
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        c.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('0', ?1)",
+            [encoded],
+        )?;
+    }
+    let path = match &f.parent {
+        Some(parent) => project
+            .join("agent-transcripts")
+            .join(uuid(parent))
+            .join("subagents")
+            .join(format!("{id}.jsonl")),
+        None => project
+            .join("agent-transcripts")
+            .join(&id)
+            .join(format!("{id}.jsonl")),
+    };
+    Ok((path, lines, id))
+}
+
 fn ts(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
@@ -536,20 +643,24 @@ mod tests {
         assert!(compressed > 0, "no compressed Codex sessions");
         let cat = engine.catalog();
         for (name, f) in &fixtures {
-            if f.agent == Agent::Antigravity {
+            if f.agent == Agent::Antigravity || f.agent == Agent::Cursor {
                 let s = &cat.sessions[&uuid(name)];
-                assert_eq!(s.source, "antigravity", "{name}");
-                assert!(
-                    s.cwd.is_some(),
-                    "{name}: no cwd from the summaries database"
-                );
+                let expected = if f.agent == Agent::Antigravity {
+                    "antigravity"
+                } else {
+                    "cursor"
+                };
+                assert_eq!(s.source, expected, "{name}");
+                assert!(s.cwd.is_some(), "{name}: no cwd from metadata");
                 // The catalog shows the summary's title, so check the stored one.
-                let title: String = engine.conn()?.query_row(
-                    "SELECT title FROM sessions WHERE id = ?1",
-                    [uuid(name)],
-                    |r| r.get(0),
-                )?;
-                assert_eq!(Some(&title), f.title.as_ref(), "{name}");
+                if let Some(expected_title) = f.title.as_ref() {
+                    let title: String = engine.conn()?.query_row(
+                        "SELECT title FROM sessions WHERE id = ?1",
+                        [uuid(name)],
+                        |r| r.get(0),
+                    )?;
+                    assert_eq!(&title, expected_title, "{name}");
+                }
             }
         }
         assert_eq!(cat.sessions.len(), fixtures.len());
