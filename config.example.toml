@@ -58,4 +58,4 @@ summarize_exclude_paths = []  # cwd substrings never sent for summaries
 idle_minutes = 20
 
 [ui]
-hide_system_instructions = false   # hide <system_instruction> blocks in prompts
+hide_system_instructions = true    # hide <system_instruction> blocks in prompts

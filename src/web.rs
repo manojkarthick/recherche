@@ -2079,7 +2079,7 @@ mod tests {
     }
 
     #[test]
-    fn system_instructions_hide_only_when_configured() {
+    fn system_instructions_hide_unless_disabled() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = crate::config::Config::default();
         cfg.llm.enabled = false;
@@ -2087,9 +2087,9 @@ mod tests {
         cfg.search.rerank = false;
         let mut engine = Engine::open_in(cfg, dir.path()).unwrap();
         let text = "<system_instruction>\nbe brief\n</system_instruction>\n\n<system_instruction>x</system_instruction>\nfix the test";
-        assert_eq!(shown_prompt(&engine, text), text);
-        engine.cfg.ui.hide_system_instructions = true;
         assert_eq!(shown_prompt(&engine, text), "fix the test");
+        engine.cfg.ui.hide_system_instructions = false;
+        assert_eq!(shown_prompt(&engine, text), text);
     }
 
     #[test]
