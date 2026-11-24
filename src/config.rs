@@ -106,13 +106,21 @@ pub struct Search {
     pub boilerplate_min_sessions: i64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Ui {
     /// Hide `<system_instruction>` blocks that harnesses such as Conductor
     /// prepend to prompts, and from titles taken from such a prompt, in the
     /// web UI and the API. The text stays indexed and searchable.
     pub hide_system_instructions: bool,
+}
+
+impl Default for Ui {
+    fn default() -> Self {
+        Self {
+            hide_system_instructions: true,
+        }
+    }
 }
 
 impl Default for Config {
