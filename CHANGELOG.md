@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/manojkarthick/recherche/compare/v0.5.0...v0.6.0) (2026-11-24)
+
+
+### Features
+
+* index Cursor sessions ([#46](https://github.com/manojkarthick/recherche/issues/46)) ([c71bb05](https://github.com/manojkarthick/recherche/commit/c71bb0557f477cc47adb3679db68a7d6838e5bba))
+* optionally hide &lt;system_instruction&gt; blocks in prompts ([#45](https://github.com/manojkarthick/recherche/issues/45)) ([feffca4](https://github.com/manojkarthick/recherche/commit/feffca4ea31f15756b634ef6d74385270d333cad))
+* **web:** use Geist and Geist Mono as the UI fonts ([#43](https://github.com/manojkarthick/recherche/issues/43)) ([430de85](https://github.com/manojkarthick/recherche/commit/430de850a65bc4e7febc9974593729706ba90296))
+
 ## [0.5.0](https://github.com/manojkarthick/recherche/compare/v0.4.0...v0.5.0) (2026-11-22)
 
 
