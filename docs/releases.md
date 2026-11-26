@@ -9,10 +9,10 @@ If a publishing job fails, use **Re-run failed jobs** on that workflow run.
 
 ## One-time setup
 
-Set the `JRELEASER_HOMEBREW_GITHUB_TOKEN` GitHub Actions secret in the recherche
-repository. Use a fine-grained token with **Contents: Read and write** access
-to `manojkarthick/homebrew-tap`. The built-in `GITHUB_TOKEN` publishes assets
-in recherche but cannot write to a separate repository.
+Set the `HOMEBREW_TAP_TOKEN` GitHub Actions secret in the recherche repository.
+Use a fine-grained token with **Contents: Read and write** access to
+`manojkarthick/homebrew-tap`. The built-in `GITHUB_TOKEN` publishes assets in
+recherche but cannot write to a separate repository.
 
 ## What gets published
 
