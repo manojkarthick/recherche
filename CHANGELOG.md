@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/manojkarthick/recherche/compare/v0.6.0...v0.6.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* hide &lt;system_instruction&gt; blocks by default ([#47](https://github.com/manojkarthick/recherche/issues/47)) ([e535e82](https://github.com/manojkarthick/recherche/commit/e535e82a9005e30402dda0259bde170c0e426a40))
+
 ## [0.6.0](https://github.com/manojkarthick/recherche/compare/v0.5.0...v0.6.0) (2026-11-24)
 
 
