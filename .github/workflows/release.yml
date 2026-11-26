@@ -74,7 +74,7 @@ jobs:
       JRELEASER_PROJECT_VERSION: ${{ needs.release-please.outputs.version }}
       JRELEASER_TAG_NAME: ${{ needs.release-please.outputs.tag }}
       JRELEASER_GITHUB_TOKEN: ${{ github.token }}
-      JRELEASER_HOMEBREW_GITHUB_TOKEN: ${{ secrets.JRELEASER_HOMEBREW_GITHUB_TOKEN }}
+      JRELEASER_HOMEBREW_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
